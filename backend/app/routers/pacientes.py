@@ -10,6 +10,7 @@ from app.schemas.paciente import PacienteCreate, PacienteDetail, PacienteList, P
 from app.schemas.respuesta import ErrorResponse, SuccessResponse
 from app.services import pacientes_service
 from app.services.extraccion_service import _subir_a_cloud_storage, _generar_url_firmada
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -125,18 +126,16 @@ async def subir_foto_paciente(
 
     try:
         gs_url = _subir_a_cloud_storage(contenido_comprimido, f"paciente_{paciente_id}.jpg", content_type="image/jpeg", prefix="pacientes")
-        signed_url = _generar_url_firmada(gs_url, expiration_hours=168)
-        foto_url = signed_url or gs_url
     except Exception as exc:
         logger.warning("No se pudo subir foto a Cloud Storage: %s", exc)
-        foto_url = None
+        gs_url = None
 
     await db.collection("pacientes").document(paciente_id).update({
-        "foto_paciente_url": foto_url,
+        "foto_paciente_url": gs_url,
         "updated_at": datetime.now(timezone.utc),
     })
 
-    return SuccessResponse(message="Foto subida exitosamente", data={"foto_url": foto_url})
+    return SuccessResponse(message="Foto subida exitosamente", data={"foto_url": gs_url})
 
 
 @router.get(
@@ -162,7 +161,18 @@ async def obtener_foto_paciente(
     if signed_url:
         return RedirectResponse(url=signed_url)
 
-    raise HTTPException(status_code=404, detail={"detail": "No se pudo generar URL de acceso", "error_code": "FILE_NOT_FOUND"})
+    try:
+        from google.cloud import storage as gcs
+        parts = foto_url.replace("gs://", "").split("/", 1)
+        if len(parts) == 2:
+            bucket = gcs.Client(project=settings.gcp_project).bucket(parts[0])
+            blob = bucket.blob(parts[1])
+            img_bytes = blob.download_as_bytes()
+            return Response(content=img_bytes, media_type="image/jpeg")
+    except Exception as exc:
+        logger.warning("No se pudo leer imagen de Cloud Storage: %s", exc)
+
+    raise HTTPException(status_code=404, detail={"detail": "No se pudo acceder a la foto", "error_code": "FILE_NOT_FOUND"})
 
 
 @router.put(

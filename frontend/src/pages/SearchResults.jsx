@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useSearchParams, Link, useNavigate } from 'react-router-dom'
-import { searchPatients } from '../services/api'
+import { searchPatients, getPatientPhotoUrl } from '../services/api'
 
 function SearchResults() {
   const [searchParams] = useSearchParams()
@@ -67,8 +67,8 @@ function SearchResults() {
                 className="block bg-white border rounded-xl p-4 hover:border-blue-400 hover:shadow-md transition"
               >
                 <div className="flex items-start gap-3">
-                  {p.foto_paciente_url?.startsWith('http') && (
-                    <img src={p.foto_paciente_url} alt="" className="w-12 h-12 rounded-full object-cover flex-shrink-0 mt-0.5" />
+                  {p.foto_paciente_url && (
+                    <img src={getPatientPhotoUrl(p.id)} alt="" className="w-12 h-12 rounded-full object-cover flex-shrink-0 mt-0.5" />
                   )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between">
