@@ -43,6 +43,8 @@ function Admin() {
     axios.get(`${API_BASE}/health`)
       .then(r => setServerInfo(r.data))
       .catch(() => setServerInfo({ error: 'desconectado' }))
+
+    listUploads(50, 0).then(r => setUploads(r.data.items || [])).catch(() => {})
   }, [])
 
   const handleAuth = async () => {
@@ -290,21 +292,9 @@ function Admin() {
       {/* Lista de uploads */}
       <section className="bg-white border rounded-xl p-6">
         <h3 className="font-semibold text-lg text-gray-900 mb-4">Archivos subidos ({uploads.length})</h3>
-        <button
-          onClick={async () => {
-            setLoadingUploads(true)
-            try {
-              const r = await listUploads(50, 0)
-              setUploads(r.data.items || [])
-            } catch { setUploads([]) }
-            setLoadingUploads(false)
-          }}
-          disabled={loadingUploads}
-          className="mb-4 px-4 py-2 bg-gray-700 text-white rounded-lg text-sm font-medium hover:bg-gray-600 disabled:opacity-40 transition"
-        >
-          {loadingUploads ? 'Cargando...' : 'Cargar archivos'}
-        </button>
-        {uploads.length > 0 && (
+        {loadingUploads ? (
+          <div className="text-center py-4"><div className="animate-spin inline-block w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full" /></div>
+        ) : uploads.length > 0 ? (
           <div className="space-y-2 max-h-96 overflow-y-auto">
             {uploads.map(u => (
               <div key={u.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-200 text-sm">
@@ -334,7 +324,7 @@ function Admin() {
               </div>
             ))}
           </div>
-        )}
+        ) : null}
       </section>
     </div>
   )

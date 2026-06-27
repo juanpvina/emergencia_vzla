@@ -29,6 +29,9 @@ function Archivos() {
   const [addForm, setAddForm] = useState({
     nombre: '', cedula: '', hospital: '', piso: '', habitacion: '', edad: '', estado_salud: '', contacto: '',
   })
+  const [saving, setSaving] = useState(false)
+  const [votingId, setVotingId] = useState(null)
+  const [imageLoading, setImageLoading] = useState(true)
   const imgRef = useRef(null)
 
   const verifiedCount = (pcs) => pcs?.filter(p => p.status_verificacion === 'verificado').length || 0
@@ -61,6 +64,7 @@ function Archivos() {
     setEditPaciente(null)
     setZoom(1)
     setPan({ x: 0, y: 0 })
+    setImageLoading(true)
     try {
       const res = await getUploadDetail(id)
       setSelected(res.data)
@@ -86,6 +90,9 @@ function Archivos() {
   }
 
   const handleSave = async () => {
+    if (saving || !selected) return
+    const prevPacientes = [...selected.pacientes]
+    setSaving(true)
     try {
       const payload = {
         nombre: editForm.nombre || null,
@@ -98,22 +105,22 @@ function Archivos() {
         contacto: editForm.contacto || null,
       }
       const updated = {
-        ...selected.pacientes.find(p => p.id === editPaciente),
+        ...prevPacientes.find(p => p.id === editPaciente),
         ...payload,
         edad: payload.edad,
       }
-      setSelected({
-        ...selected,
-        pacientes: selected.pacientes.map(p => p.id === editPaciente ? updated : p),
-      })
+      setSelected({ ...selected, pacientes: prevPacientes.map(p => p.id === editPaciente ? updated : p) })
       await updatePatient(editPaciente, payload)
       setMsg({ type: 'success', text: 'Paciente actualizado' })
       setTimeout(() => setMsg(null), 2000)
       setEditPaciente(null)
     } catch (err) {
+      setSelected({ ...selected, pacientes: prevPacientes })
       const detail = err.response?.data?.detail
       const msg = Array.isArray(detail) ? detail.map(d => d.msg).join('; ') : typeof detail === 'string' ? detail : 'Error al actualizar'
       setMsg({ type: 'error', text: msg })
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -165,24 +172,28 @@ function Archivos() {
   }
 
   const handleVote = async (pacienteId, tipo) => {
+    if (votingId || !selected) return
+    setVotingId(pacienteId)
+    const prevPacientes = [...selected.pacientes]
     try {
+      const updatePacientes = prevPacientes.map(p =>
+        p.id === pacienteId
+          ? { ...p, status_verificacion: tipo === 'confirmar' ? 'verificado' : 'error', total_confirmaciones: tipo === 'confirmar' ? (p.total_confirmaciones || 0) + 1 : (p.total_confirmaciones || 0), total_reportes: tipo === 'reportar_error' ? (p.total_reportes || 0) + 1 : (p.total_reportes || 0) }
+          : p
+      )
+      setSelected({ ...selected, pacientes: updatePacientes })
       await submitVerification(pacienteId, { tipo, verificador_id: fingerprint })
-      if (selected) {
-        const updatePacientes = selected.pacientes.map(p =>
-          p.id === pacienteId
-            ? { ...p, status_verificacion: tipo === 'confirmar' ? 'verificado' : 'error', total_confirmaciones: tipo === 'confirmar' ? (p.total_confirmaciones || 0) + 1 : (p.total_confirmaciones || 0), total_reportes: tipo === 'reportar_error' ? (p.total_reportes || 0) + 1 : (p.total_reportes || 0) }
-            : p
-        )
-        setSelected({ ...selected, pacientes: updatePacientes })
-      }
       setMsg({ type: 'success', text: '✅ Votado' })
       setTimeout(() => setMsg(null), 2000)
     } catch (err) {
+      setSelected({ ...selected, pacientes: prevPacientes })
       if (err.response?.status === 409) {
         setMsg({ type: 'error', text: 'Ya votaste este paciente' })
       } else {
         setMsg({ type: 'error', text: 'Error al votar' })
       }
+    } finally {
+      setVotingId(null)
     }
   }
 
@@ -280,15 +291,26 @@ function Archivos() {
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseUp}
               >
+                {imageLoading && (
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="animate-pulse flex flex-col items-center gap-2">
+                      <div className="w-8 h-8 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
+                      <span className="text-gray-400 text-xs">Cargando imagen...</span>
+                    </div>
+                  </div>
+                )}
                 <img
                   src={getUploadImageUrl(selected.id)}
                   alt="Listado original"
                   className="max-w-none absolute"
                   style={{
+                    display: imageLoading ? 'none' : 'block',
                     transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
                     transformOrigin: '0 0',
                   }}
                   draggable={false}
+                  onLoad={() => setImageLoading(false)}
+                  onError={() => setImageLoading(false)}
                 />
                 <div className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-2 py-1 rounded">
                   {Math.round(zoom * 100)}% · Scroll para zoom
@@ -339,8 +361,8 @@ function Archivos() {
                           </div>
                           <input value={editForm.estado_salud} onChange={e => setEditForm({...editForm, estado_salud: e.target.value})} className="w-full px-2 py-1 border rounded text-sm" placeholder="Estado de salud" />
                           <div className="flex gap-2">
-                            <button onClick={handleSave} className="px-3 py-1 bg-blue-600 text-white rounded text-xs">Guardar</button>
-                            <button onClick={() => setEditPaciente(null)} className="px-3 py-1 bg-gray-200 rounded text-xs">Cancelar</button>
+                            <button onClick={handleSave} disabled={saving} className="px-3 py-1 bg-blue-600 text-white rounded text-xs disabled:opacity-40">{saving ? '...' : 'Guardar'}</button>
+                            <button onClick={() => setEditPaciente(null)} disabled={saving} className="px-3 py-1 bg-gray-200 rounded text-xs">Cancelar</button>
                           </div>
                         </div>
                       ) : (
@@ -359,8 +381,8 @@ function Archivos() {
                               </div>
                             </div>
                             <div className="flex items-center gap-1 flex-shrink-0">
-                              <button onClick={() => handleVote(p.id, 'confirmar')} className="px-1.5 py-1 text-xs text-green-600 hover:bg-green-50 rounded" title="Confirmar">✅</button>
-                              <button onClick={() => handleVote(p.id, 'reportar_error')} className="px-1.5 py-1 text-xs text-red-600 hover:bg-red-50 rounded" title="Reportar error">❌</button>
+                              <button onClick={() => handleVote(p.id, 'confirmar')} disabled={votingId === p.id} className="px-1.5 py-1 text-xs text-green-600 hover:bg-green-50 rounded disabled:opacity-40" title="Confirmar">✅</button>
+                              <button onClick={() => handleVote(p.id, 'reportar_error')} disabled={votingId === p.id} className="px-1.5 py-1 text-xs text-red-600 hover:bg-red-50 rounded disabled:opacity-40" title="Reportar error">❌</button>
                               <button onClick={() => handleEdit(p)} className="px-1.5 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded">✏️</button>
                               <button onClick={() => handleDelete(p.id)} className="px-1.5 py-1 text-xs text-red-600 hover:bg-red-50 rounded">🗑️</button>
                             </div>
