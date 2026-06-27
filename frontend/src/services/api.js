@@ -54,6 +54,10 @@ export async function getPatientImageUrl(id) {
   return `${API_BASE}/api/v1/pacientes/${id}/imagen`;
 }
 
+export async function getPatientPhotoUrl(id) {
+  return `${API_BASE}/api/v1/pacientes/${id}/foto-paciente`;
+}
+
 export async function getVerifications(patientId) {
   return api.get(`/verificaciones/${patientId}`);
 }
@@ -68,4 +72,17 @@ export async function downloadExcelTemplate() {
 
 export async function listPatients(limit = 20, offset = 0) {
   return api.get('/pacientes', { params: { limit, offset } });
+}
+
+export async function uploadPatientPhoto(id, file, onProgress) {
+  const form = new FormData();
+  form.append('file', file);
+  return api.post(`/pacientes/${id}/foto`, form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) {
+        onProgress(Math.round((e.loaded * 100) / e.total));
+      }
+    },
+  });
 }

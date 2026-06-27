@@ -193,9 +193,9 @@ function Debug() {
       <div className="mt-6 p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
         <p className="font-medium mb-1">¿Cómo funciona?</p>
         <ul className="list-disc list-inside space-y-1 text-blue-700">
-          <li><strong>Gemini</strong>: La imagen se envía completa a Gemini Vision. Requiere API Key.</li>
-          <li><strong>Cloud Vision</strong>: Google Cloud Vision extrae el texto. Un parser rule-based lo estructura. Sin IA.</li>
-          <li><strong>Vision+Gemini</strong>: Cloud Vision extrae texto. Gemini solo estructura (más barato que enviar imagen).</li>
+          <li><strong>Gemini</strong>: La imagen se envía completa a Gemini Vision.</li>
+          <li><strong>Cloud Vision</strong>: Google Cloud Vision extrae el texto. Un parser rule-based lo estructura.</li>
+          <li><strong>Vision+Gemini</strong>: Cloud Vision extrae texto. Gemini solo estructura ( mas fiable ).</li>
         </ul>
         <p className="mt-2 text-blue-600">
           Espacio para debug de distintas formas de OCR

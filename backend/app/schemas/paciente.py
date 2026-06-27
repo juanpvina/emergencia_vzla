@@ -27,6 +27,7 @@ class PacienteRead(BaseModel):
     estado_salud: str | None
     contacto: str | None
     foto_url: str | None
+    foto_paciente_url: str | None
     status_verificacion: str
     confianza_global: float | None
     ultima_extraccion_id: str | None

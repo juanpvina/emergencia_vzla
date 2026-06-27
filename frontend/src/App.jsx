@@ -3,7 +3,6 @@ import Home from './pages/Home'
 import Upload from './pages/Upload'
 import SearchResults from './pages/SearchResults'
 import PatientDetail from './pages/PatientDetail'
-import RegisterPatient from './pages/RegisterPatient'
 import Debug from './pages/Debug'
 import Admin from './pages/Admin'
 
@@ -18,7 +17,6 @@ function App() {
           <nav className="flex gap-4 text-sm font-medium">
             <Link to="/" className="hover:text-blue-200 transition">Inicio</Link>
             <Link to="/subir" className="hover:text-blue-200 transition">Subir</Link>
-            <Link to="/registrar" className="hover:text-blue-200 transition">Registrar</Link>
             <Link to="/admin" className="hover:text-blue-200 transition text-yellow-200">Admin</Link>
             <Link to="/debug" className="hover:text-blue-200 transition opacity-60">Debug</Link>
           </nav>
@@ -31,7 +29,6 @@ function App() {
           <Route path="/subir" element={<Upload />} />
           <Route path="/buscar" element={<SearchResults />} />
           <Route path="/paciente/:id" element={<PatientDetail />} />
-          <Route path="/registrar" element={<RegisterPatient />} />
           <Route path="/debug" element={<Debug />} />
           <Route path="/admin" element={<Admin />} />
         </Routes>

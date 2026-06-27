@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { getPatient, getPatientImageUrl, getVerifications, submitVerification } from '../services/api'
+import { getPatient, getPatientImageUrl, getVerifications, submitVerification, uploadPatientPhoto, getPatientPhotoUrl } from '../services/api'
+import { useDropzone } from 'react-dropzone'
 
 function generateFingerprint() {
   const data = [
@@ -33,6 +34,30 @@ function PatientDetail() {
   const [comment, setComment] = useState('')
   const [voteError, setVoteError] = useState(null)
   const [voteSuccess, setVoteSuccess] = useState(null)
+  const [uploadingFoto, setUploadingFoto] = useState(false)
+  const [fotoMsg, setFotoMsg] = useState(null)
+
+  const onFotoDrop = useCallback(async (acceptedFiles) => {
+    const f = acceptedFiles[0]
+    if (!f) return
+    setUploadingFoto(true)
+    setFotoMsg(null)
+    try {
+      const res = await uploadPatientPhoto(id, f)
+      setPatient(prev => ({ ...prev, foto_paciente_url: res.data.data.foto_url }))
+      setFotoMsg({ type: 'success', text: 'Foto subida' })
+    } catch (err) {
+      setFotoMsg({ type: 'error', text: err.response?.data?.detail || 'Error al subir foto' })
+    }
+    setUploadingFoto(false)
+  }, [id])
+
+  const { getRootProps: getFotoProps, getInputProps: getFotoInputProps, isDragActive: isFotoDrag } = useDropzone({
+    onDrop: onFotoDrop,
+    accept: { 'image/*': ['.jpg', '.jpeg', '.png', '.webp'] },
+    maxFiles: 1,
+    maxSize: 5 * 1024 * 1024,
+  })
 
   const fingerprint = generateFingerprint()
 
@@ -97,7 +122,7 @@ function PatientDetail() {
 
       <div className="bg-white border rounded-xl p-6">
         <div className="grid md:grid-cols-3 gap-6">
-          <div className="md:col-span-1">
+          <div className="md:col-span-1 space-y-4">
             <div className="bg-gray-100 rounded-lg overflow-hidden min-h-[200px] flex items-center justify-center">
               {imageLoading && (
                 <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full" />
@@ -110,6 +135,28 @@ function PatientDetail() {
                 onError={() => setImageLoading(false)}
                 style={{ display: imageLoading ? 'none' : 'block' }}
               />
+            </div>
+
+            <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-4 text-center">
+              <p className="text-xs text-gray-500 mb-2">Foto del paciente (opcional, baja calidad)</p>
+              {patient.foto_paciente_url && (
+                <img src={getPatientPhotoUrl(id)} alt="Foto del paciente" className="max-h-32 mx-auto mb-2 rounded" />
+              )}
+              <div {...getFotoProps()} className="cursor-pointer">
+                <input {...getFotoInputProps()} />
+                {uploadingFoto ? (
+                  <p className="text-sm text-blue-600">Subiendo...</p>
+                ) : (
+                  <p className="text-sm text-blue-600 hover:text-blue-800">
+                    {isFotoDrag ? 'Suelta aquí' : 'Subir foto del paciente'}
+                  </p>
+                )}
+              </div>
+              {fotoMsg && (
+                <p className={`text-xs mt-1 ${fotoMsg.type === 'success' ? 'text-green-600' : 'text-red-600'}`}>
+                  {fotoMsg.text}
+                </p>
+              )}
             </div>
           </div>
 

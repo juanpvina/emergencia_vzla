@@ -1,6 +1,7 @@
-import uuid
+import logging
+from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from fastapi.responses import RedirectResponse
 from google.cloud.firestore_v1.async_client import AsyncClient as AsyncFirestoreClient
 
@@ -8,6 +9,9 @@ from app.firestore import get_db
 from app.schemas.paciente import PacienteCreate, PacienteDetail, PacienteList
 from app.schemas.respuesta import ErrorResponse, SuccessResponse
 from app.services import pacientes_service
+from app.services.extraccion_service import _subir_a_cloud_storage, _generar_url_firmada
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/pacientes", tags=["Pacientes"])
 
@@ -68,7 +72,6 @@ async def obtener_imagen_paciente(
             detail={"detail": "Imagen no encontrada para este paciente", "error_code": "NOT_FOUND"},
         )
 
-    from app.services.extraccion_service import _generar_url_firmada
     signed_url = _generar_url_firmada(gs_url)
     if signed_url:
         return RedirectResponse(url=signed_url)
@@ -95,3 +98,60 @@ async def obtener_extracciones(
         )
     extracciones = await pacientes_service.obtener_extracciones(db, paciente_id)
     return {"paciente_id": paciente_id, "extracciones": extracciones}
+
+
+@router.post(
+    "/{paciente_id}/foto",
+    responses={404: {"model": ErrorResponse}},
+)
+async def subir_foto_paciente(
+    paciente_id: str,
+    file: UploadFile,
+    db: AsyncFirestoreClient = Depends(get_db),
+):
+    """Sube una foto del paciente (no del listado)."""
+    paciente = await pacientes_service.obtener_paciente(db, paciente_id)
+    if not paciente:
+        raise HTTPException(status_code=404, detail={"detail": "Paciente no encontrado", "error_code": "NOT_FOUND"})
+
+    contenido = await file.read()
+    if len(contenido) == 0:
+        raise HTTPException(status_code=422, detail={"detail": "Archivo vacío", "error_code": "EMPTY_FILE"})
+
+    from app.utils.imagen import validar_imagen
+    validar_imagen(file.filename or "foto.jpg", contenido)
+
+    try:
+        gs_url = _subir_a_cloud_storage(contenido, file.filename or "foto.jpg", content_type=file.content_type or "image/jpeg")
+    except Exception:
+        gs_url = None
+
+    await db.collection("pacientes").document(paciente_id).update({
+        "foto_paciente_url": gs_url,
+        "updated_at": datetime.now(timezone.utc),
+    })
+
+    return SuccessResponse(message="Foto subida exitosamente", data={"foto_url": gs_url})
+
+
+@router.get(
+    "/{paciente_id}/foto-paciente",
+    responses={404: {"model": ErrorResponse}},
+)
+async def obtener_foto_paciente(
+    paciente_id: str,
+    db: AsyncFirestoreClient = Depends(get_db),
+):
+    """Redirige a la URL firmada de la foto personal del paciente."""
+    doc = await db.collection("pacientes").document(paciente_id).get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail={"detail": "Paciente no encontrado", "error_code": "NOT_FOUND"})
+    gs_url = doc.to_dict().get("foto_paciente_url")
+    if not gs_url:
+        raise HTTPException(status_code=404, detail={"detail": "Foto no encontrada", "error_code": "NOT_FOUND"})
+
+    signed_url = _generar_url_firmada(gs_url)
+    if signed_url:
+        return RedirectResponse(url=signed_url)
+
+    raise HTTPException(status_code=404, detail={"detail": "No se pudo generar URL de acceso", "error_code": "FILE_NOT_FOUND"})
