@@ -1,8 +1,10 @@
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
 
@@ -51,16 +53,20 @@ app.include_router(verificaciones.router)
 app.include_router(admin.router)
 
 
-@app.get("/")
-async def root():
-    return {
-        "app": "Emergencia Venezuela - Pacientes API",
-        "version": "0.2.0",
-        "docs": "/docs",
-        "database": "Firestore",
-    }
-
-
 @app.get("/health")
 async def health():
     return {"status": "ok", "database": "firestore"}
+
+
+static_dir = Path(__file__).resolve().parent.parent / "static"
+if static_dir.exists() and (static_dir / "index.html").exists():
+    app.mount("/", StaticFiles(directory=str(static_dir), html=True), name="static")
+else:
+    @app.get("/")
+    async def root():
+        return {
+            "app": "Emergencia Venezuela - Pacientes API",
+            "version": "0.2.0",
+            "docs": "/docs",
+            "database": "Firestore",
+        }
