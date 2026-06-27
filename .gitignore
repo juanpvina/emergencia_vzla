@@ -9,15 +9,22 @@ build/
 venv/
 env/
 
+# Node
+node_modules/
+frontend/dist/
+frontend/.env
+
 # Environment
 .env
 *.env.local
+
+# Uploads temp
+uploads/
 
 # IDE
 .idea/
 .vscode/
 *.swp
-*.swo
 *~
 
 # OS

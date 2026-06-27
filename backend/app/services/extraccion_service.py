@@ -1,102 +1,113 @@
+import io
 import logging
+import re
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from google.cloud import storage
+from google.cloud.firestore_v1.async_client import AsyncClient as AsyncFirestoreClient
 
 from app.config import settings
-from app.models.extraccion import Extraccion
-from app.models.paciente import Paciente
 from app.schemas.extraccion import (
     ExtraccionResult,
     GeminiResponse,
     PacienteExtraido,
 )
 from app.services.gemini_service import extraer_datos_desde_imagen
+from app.services.vision_ocr_service import extraer_texto_vision, parsear_texto_a_pacientes, estructurar_texto_con_gemini
 from app.utils.imagen import mejorar_contraste, validar_imagen
 
 logger = logging.getLogger(__name__)
 
 
-def guardar_imagen_en_disco(contenido: bytes, nombre_original: str) -> str:
-    """
-    Guarda la imagen subida en el directorio de uploads.
+def _get_storage_client():
+    return storage.Client(project=settings.gcp_project)
 
-    Args:
-        contenido: Contenido binario de la imagen.
-        nombre_original: Nombre original del archivo.
 
-    Returns:
-        Ruta absoluta al archivo guardado.
-    """
-    upload_dir = Path(settings.upload_dir)
-    upload_dir.mkdir(parents=True, exist_ok=True)
+def _subir_a_cloud_storage(contenido: bytes, nombre_archivo: str, content_type: str = "image/jpeg") -> str:
+    """Sube contenido a Cloud Storage y devuelve gs:// URL."""
+    client = _get_storage_client()
+    bucket = client.bucket(settings.storage_bucket)
 
-    # Generar nombre único para evitar colisiones
-    ext = Path(nombre_original).suffix
-    nombre_unico = f"{uuid.uuid4().hex}{ext}"
-    ruta = upload_dir / nombre_unico
+    ext = Path(nombre_archivo).suffix or ".jpeg"
+    blob_name = f"uploads/{uuid.uuid4().hex}{ext}"
+    blob = bucket.blob(blob_name)
+    blob.upload_from_string(contenido, content_type=content_type)
 
-    with open(ruta, "wb") as f:
-        f.write(contenido)
+    gs_url = f"gs://{settings.storage_bucket}/{blob_name}"
+    logger.info("Imagen subida a Cloud Storage: %s", gs_url)
+    return gs_url
 
-    logger.info("Imagen guardada: %s", ruta)
-    return str(ruta.resolve())
+
+def _generar_url_firmada(gs_url: str, expiration_hours: int = 24) -> str | None:
+    """Genera URL firmada para acceder a la imagen desde el frontend."""
+    try:
+        client = _get_storage_client()
+        parts = gs_url.replace("gs://", "").split("/", 1)
+        if len(parts) != 2:
+            return None
+        bucket_name, blob_name = parts
+        bucket = client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+        return blob.generate_signed_url(
+            expiration=datetime.now(timezone.utc) + timedelta(hours=expiration_hours)
+        )
+    except Exception as exc:
+        logger.warning("No se pudo generar URL firmada: %s", exc)
+        return None
 
 
 async def procesar_imagen(
-    nombre_archivo: str, contenido: bytes, db: AsyncSession
+    nombre_archivo: str, contenido: bytes, db: AsyncFirestoreClient,
+    motor: str | None = None,
 ) -> ExtraccionResult:
     """
-    Procesa una imagen de listado hospitalario:
-    1. Valida la imagen
-    2. Guarda en disco
-    3. Mejora contraste
-    4. Envía a Gemini
-    5. Parsea respuesta
-    6. Separa completos/parciales
-    7. Guarda en DB
-    8. Devuelve resultado
-
-    Args:
-        nombre_archivo: Nombre del archivo subido.
-        contenido: Contenido binario.
-        db: Sesión de base de datos.
-
-    Returns:
-        ExtraccionResult con los resultados del procesamiento.
+    Procesa imagen de listado hospitalario con el motor especificado.
+    Si motor es None, lee la configuración desde Firestore.
     """
-    # 1. Validar
+    motor = motor or await _get_engine_from_firestore(db)
+
     validar_imagen(nombre_archivo, contenido)
 
-    # 2. Guardar imagen original en disco
-    ruta_original = guardar_imagen_en_disco(contenido, nombre_archivo)
+    gs_url = _subir_a_cloud_storage(contenido, nombre_archivo)
 
-    # 3. Mejorar contraste (crear versión mejorada)
-    ruta_mejorada = mejorar_contraste(ruta_original)
+    upload_dir = Path(settings.upload_dir)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    temp_path = upload_dir / f"temp_{uuid.uuid4().hex}.jpeg"
+    with open(temp_path, "wb") as f:
+        f.write(contenido)
 
-    # 4. Enviar a Gemini
     try:
-        respuesta_gemini: GeminiResponse = await extraer_datos_desde_imagen(
-            ruta_mejorada
-        )
-    except Exception as exc:
-        logger.error("Error en extracción Gemini: %s", exc)
-        raise
+        if motor == "gemini":
+            respuesta_gemini: GeminiResponse = await _procesar_con_gemini(temp_path)
+            modelo_vlm = settings.gemini_model
+        elif motor == "vision":
+            respuesta_gemini = _procesar_con_vision(contenido)
+            modelo_vlm = "cloud-vision+parser"
+        elif motor == "vision+gemini":
+            respuesta_gemini = await _procesar_con_vision_y_gemini(contenido)
+            modelo_vlm = "cloud-vision+gemini"
+        else:
+            raise ValueError(
+                f"Motor '{motor}' no válido. Use: gemini, vision, vision+gemini"
+            )
+    finally:
+        for p in [temp_path, Path(str(temp_path).replace(".jpeg", "_mejorada.jpeg"))]:
+            if p.exists():
+                p.unlink()
 
-    # Guardar pacientes en DB
-    pacientes_ids: list[uuid.UUID] = []
+    pacientes_ids = []
     for paciente_data in respuesta_gemini.pacientes:
-        paciente_id = await _guardar_paciente_y_extraccion(
+        paciente_id = await _guardar_paciente_y_extraccion_firestore(
             db=db,
             paciente_data=paciente_data,
-            ruta_imagen=ruta_original,
+            gs_url=gs_url,
             respuesta_gemini=respuesta_gemini,
+            origen=f"imagen_{motor}",
         )
         pacientes_ids.append(paciente_id)
 
-    # Construir respuesta
     return ExtraccionResult(
         pacientes_creados=pacientes_ids,
         total_pacientes=len(respuesta_gemini.pacientes),
@@ -105,107 +116,215 @@ async def procesar_imagen(
     )
 
 
-async def _guardar_paciente_y_extraccion(
-    db: AsyncSession,
-    paciente_data: PacienteExtraido,
-    ruta_imagen: str,
-    respuesta_gemini,
-) -> uuid.UUID:
-    """
-    Guarda o actualiza un paciente y crea su registro de extracción.
+async def _procesar_con_gemini(temp_path) -> GeminiResponse:
+    """Motor gemini: Gemini Vision directo sobre la imagen."""
+    ruta_mejorada = mejorar_contraste(str(temp_path))
+    return await extraer_datos_desde_imagen(ruta_mejorada)
 
-    Si ya existe un paciente con la misma cédula, vincula la extracción
-    al paciente existente (evita duplicados).
-    """
-    cedula = paciente_data.cedula.valor
-    hospital = paciente_data.hospital.valor
-    edad = _parsear_edad(paciente_data.edad.valor)
 
-    # Buscar si ya existe paciente con esa cédula
-    paciente = None
-    if cedula:
-        result = await db.execute(
-            select(Paciente).where(Paciente.cedula == cedula)
-        )
-        paciente = result.scalar_one_or_none()
+def _procesar_con_vision(contenido: bytes) -> GeminiResponse:
+    """Motor vision: Cloud Vision OCR + parser rule-based (sin LLM)."""
+    lineas = extraer_texto_vision(contenido)
+    return parsear_texto_a_pacientes(lineas)
 
-    if paciente:
-        logger.info("Paciente existente encontrado (cédula %s), vinculando nueva extracción", cedula)
-    else:
-        # Crear nuevo paciente
-        paciente = Paciente(
-            nombre=paciente_data.nombre.valor or "S/N",
-            cedula=cedula,
-            hospital=hospital,
-            piso=paciente_data.piso.valor,
-            habitacion=paciente_data.habitacion.valor,
-            edad=edad,
-            estado_salud=paciente_data.estado_salud.valor,
-            contacto=paciente_data.contacto.valor,
-            status_verificacion="no_verificado",
-        )
-        db.add(paciente)
-        await db.flush()
-        logger.info("Nuevo paciente creado: %s (cédula: %s)", paciente.nombre, cedula)
 
-    # Crear extracción
-    extraccion = Extraccion(
-        paciente_id=paciente.id,
-        imagen_original=ruta_imagen,
-        modelo_vlm=settings.gemini_model,
-        raw_output=respuesta_gemini.model_dump(mode="json"),
-        conf_nombre=paciente_data.nombre.confianza,
-        conf_cedula=paciente_data.cedula.confianza,
-        conf_hospital=paciente_data.hospital.confianza,
-        conf_piso=paciente_data.piso.confianza,
-        conf_habitacion=paciente_data.habitacion.confianza,
-        conf_estado=paciente_data.estado_salud.confianza,
-        conf_contacto=paciente_data.contacto.confianza,
-        conf_global=sum(
-            c for c in [
-                paciente_data.nombre.confianza,
-                paciente_data.cedula.confianza,
-                paciente_data.hospital.confianza,
-                paciente_data.piso.confianza,
-                paciente_data.habitacion.confianza,
-                paciente_data.estado_salud.confianza,
-                paciente_data.contacto.confianza,
-            ] if c is not None
-        ) / 7 if any(
-            c is not None for c in [
-                paciente_data.nombre.confianza,
-                paciente_data.cedula.confianza,
-                paciente_data.hospital.confianza,
-                paciente_data.piso.confianza,
-                paciente_data.habitacion.confianza,
-                paciente_data.estado_salud.confianza,
-                paciente_data.contacto.confianza,
-            ]
-        ) else None,
-        es_completo=True,
+async def _procesar_con_vision_y_gemini(contenido: bytes) -> GeminiResponse:
+    """Motor vision+gemini: Cloud Vision OCR + Gemini estructura el texto."""
+    lineas = extraer_texto_vision(contenido)
+    if not lineas:
+        return GeminiResponse(pacientes=[], advertencias=["No se detectó texto en la imagen"])
+    return await estructurar_texto_con_gemini(lineas)
+
+
+async def procesar_excel(
+    contenido: bytes, db: AsyncFirestoreClient
+) -> ExtraccionResult:
+    """Procesa archivo Excel con datos de pacientes (sin Gemini)."""
+    from app.services.excel_service import parsear_excel
+    pacientes_data, advertencias = parsear_excel(contenido)
+
+    pacientes_ids = []
+    for data in pacientes_data:
+        paciente_id = await _guardar_paciente_desde_excel(db, data)
+        pacientes_ids.append(paciente_id)
+
+    return ExtraccionResult(
+        pacientes_creados=pacientes_ids,
+        total_pacientes=len(pacientes_data),
+        advertencias=advertencias,
+        raw_respuesta=None,
     )
-    db.add(extraccion)
-    await db.flush()
 
-    # Actualizar referencia en paciente
-    paciente.ultima_extraccion_id = extraccion.id
-    paciente.confianza_global = extraccion.conf_global
-    await db.flush()
 
-    return paciente.id
+async def _guardar_paciente_y_extraccion_firestore(
+    db: AsyncFirestoreClient,
+    paciente_data: PacienteExtraido,
+    gs_url: str,
+    respuesta_gemini,
+    origen: str = "imagen",
+) -> str:
+    cedula = paciente_data.cedula.valor
+    edad = _parsear_edad(paciente_data.edad.valor)
+    now = datetime.now(timezone.utc)
+
+    paciente_id = None
+    paciente_ref = None
+    if cedula:
+        docs = db.collection("pacientes").where(
+            field_path="cedula", op_string="==", value=cedula
+        ).limit(1)
+        results = [d async for d in docs.stream()]
+        if results:
+            paciente_ref = results[0]
+            paciente_id = paciente_ref.id
+            logger.info("Paciente existente (cédula %s), vinculando extracción", cedula)
+
+    if not paciente_id:
+        paciente_id = uuid.uuid4().hex
+        nombre = paciente_data.nombre.valor or "S/N"
+        nombre_lower = nombre.lower().strip()
+        nombre_tokens = [t for t in nombre_lower.split() if t]
+
+        paciente_data_fs = {
+            "id": paciente_id,
+            "nombre": nombre,
+            "cedula": cedula,
+            "nombre_lower": nombre_lower,
+            "nombre_tokens": nombre_tokens,
+            "hospital": paciente_data.hospital.valor,
+            "piso": paciente_data.piso.valor,
+            "habitacion": paciente_data.habitacion.valor,
+            "edad": edad,
+            "estado_salud": paciente_data.estado_salud.valor,
+            "contacto": paciente_data.contacto.valor,
+            "foto_url": gs_url,
+            "status_verificacion": "no_verificado",
+            "confianza_global": None,
+            "ultima_extraccion_id": None,
+            "total_confirmaciones": 0,
+            "total_reportes": 0,
+            "created_at": now,
+            "updated_at": now,
+            "origen": origen,
+        }
+        await db.collection("pacientes").document(paciente_id).set(paciente_data_fs)
+        logger.info("Nuevo paciente creado: %s", nombre)
+
+    confs = [
+        paciente_data.nombre.confianza,
+        paciente_data.cedula.confianza,
+        paciente_data.hospital.confianza,
+        paciente_data.piso.confianza,
+        paciente_data.habitacion.confianza,
+        paciente_data.estado_salud.confianza,
+        paciente_data.contacto.confianza,
+    ]
+    confs_validas = [c for c in confs if c is not None]
+    conf_global = sum(confs_validas) / len(confs_validas) if confs_validas else None
+
+    extraccion_id = uuid.uuid4().hex
+    extraccion_data = {
+        "id": extraccion_id,
+        "paciente_id": paciente_id,
+        "imagen_gs_url": gs_url,
+        "modelo_vlm": settings.gemini_model,
+        "prompt_usado": None,
+        "raw_output": respuesta_gemini.model_dump(mode="json"),
+        "metadatos": None,
+        "conf_nombre": paciente_data.nombre.confianza,
+        "conf_cedula": paciente_data.cedula.confianza,
+        "conf_hospital": paciente_data.hospital.confianza,
+        "conf_piso": paciente_data.piso.confianza,
+        "conf_habitacion": paciente_data.habitacion.confianza,
+        "conf_estado": paciente_data.estado_salud.confianza,
+        "conf_contacto": paciente_data.contacto.confianza,
+        "conf_global": conf_global,
+        "es_completo": True,
+        "razon_parcial": None,
+        "created_at": now,
+    }
+    await db.collection("pacientes").document(paciente_id).collection("extracciones").document(extraccion_id).set(extraccion_data)
+
+    await db.collection("pacientes").document(paciente_id).update({
+        "confianza_global": conf_global,
+        "ultima_extraccion_id": extraccion_id,
+        "updated_at": now,
+        "foto_url": gs_url,
+    })
+
+    return paciente_id
+
+
+async def _guardar_paciente_desde_excel(db: AsyncFirestoreClient, data: dict) -> str:
+    cedula = _normalizar_cedula(data.get("cedula", "")) if data.get("cedula") else None
+    now = datetime.now(timezone.utc)
+
+    paciente_id = None
+    if cedula:
+        docs = db.collection("pacientes").where(
+            field_path="cedula", op_string="==", value=cedula
+        ).limit(1)
+        results = [d async for d in docs.stream()]
+        if results:
+            paciente_id = results[0].id
+
+    if not paciente_id:
+        paciente_id = uuid.uuid4().hex
+        nombre = data.get("nombre", "S/N")
+        nombre_lower = nombre.lower().strip()
+        nombre_tokens = [t for t in nombre_lower.split() if t]
+
+        paciente_data_fs = {
+            "id": paciente_id,
+            "nombre": nombre,
+            "cedula": cedula,
+            "nombre_lower": nombre_lower,
+            "nombre_tokens": nombre_tokens,
+            "hospital": data.get("hospital"),
+            "piso": str(data.get("piso")) if data.get("piso") else None,
+            "habitacion": str(data.get("habitacion")) if data.get("habitacion") else None,
+            "edad": int(data["edad"]) if data.get("edad") else None,
+            "estado_salud": data.get("estado_salud"),
+            "contacto": data.get("contacto"),
+            "foto_url": None,
+            "status_verificacion": "no_verificado",
+            "confianza_global": 0.95,
+            "ultima_extraccion_id": None,
+            "total_confirmaciones": 0,
+            "total_reportes": 0,
+            "created_at": now,
+            "updated_at": now,
+            "origen": "excel",
+        }
+        await db.collection("pacientes").document(paciente_id).set(paciente_data_fs)
+        logger.info("Paciente creado desde Excel: %s", nombre)
+    else:
+        await db.collection("pacientes").document(paciente_id).update({
+            "updated_at": now,
+        })
+
+    return paciente_id
 
 
 def _parsear_edad(valor: str | None) -> int | None:
-    """
-    Parsea la edad desde el texto extraído por Gemini.
-
-    Gemini devuelve "45", "45 años", "45a", "3 meses", etc.
-    Extrae el primer número encontrado.
-    """
     if not valor:
         return None
-    import re
-    match = re.search(r"(\d+)", valor)
+    match = re.search(r"(\d+)", str(valor))
     if match:
         return int(match.group(1))
     return None
+
+
+def _normalizar_cedula(cedula: str) -> str:
+    return "".join(c for c in str(cedula) if c.isdigit()) if cedula else ""
+
+
+async def _get_engine_from_firestore(db) -> str:
+    """Lee el motor configurado desde Firestore (admin panel)."""
+    try:
+        doc = await db.collection("_config").document("settings").get()
+        if doc.exists:
+            return doc.to_dict().get("extraction_engine", settings.extraction_engine)
+    except Exception:
+        pass
+    return settings.extraction_engine

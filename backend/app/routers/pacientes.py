@@ -1,13 +1,12 @@
 import uuid
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi.responses import RedirectResponse
+from google.cloud.firestore_v1.async_client import AsyncClient as AsyncFirestoreClient
 
-from app.database import get_db
-from app.schemas.paciente import PacienteDetail, PacienteList, PacienteRead
-from app.schemas.respuesta import ErrorResponse
+from app.firestore import get_db
+from app.schemas.paciente import PacienteCreate, PacienteDetail, PacienteList
+from app.schemas.respuesta import ErrorResponse, SuccessResponse
 from app.services import pacientes_service
 
 router = APIRouter(prefix="/api/v1/pacientes", tags=["Pacientes"])
@@ -17,10 +16,22 @@ router = APIRouter(prefix="/api/v1/pacientes", tags=["Pacientes"])
 async def listar_pacientes(
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncFirestoreClient = Depends(get_db),
 ):
-    """Lista todos los pacientes con paginación."""
     return await pacientes_service.listar_pacientes(db, limit=limit, offset=offset)
+
+
+@router.post("", response_model=SuccessResponse)
+async def crear_paciente(
+    data: PacienteCreate,
+    db: AsyncFirestoreClient = Depends(get_db),
+):
+    """Registra manualmente un paciente/desaparecido."""
+    paciente = await pacientes_service.crear_paciente_manual(db, data)
+    return SuccessResponse(
+        message="Paciente registrado exitosamente",
+        data={"id": paciente.id, "nombre": paciente.nombre, "cedula": paciente.cedula},
+    )
 
 
 @router.get(
@@ -29,10 +40,9 @@ async def listar_pacientes(
     responses={404: {"model": ErrorResponse}},
 )
 async def obtener_paciente(
-    paciente_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    paciente_id: str,
+    db: AsyncFirestoreClient = Depends(get_db),
 ):
-    """Obtiene el detalle completo de un paciente, incluyendo conteo de verificaciones."""
     paciente = await pacientes_service.obtener_paciente(db, paciente_id)
     if not paciente:
         raise HTTPException(
@@ -47,28 +57,25 @@ async def obtener_paciente(
     responses={404: {"model": ErrorResponse}},
 )
 async def obtener_imagen_paciente(
-    paciente_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    paciente_id: str,
+    db: AsyncFirestoreClient = Depends(get_db),
 ):
-    """Devuelve la imagen original del listado de donde se extrajo al paciente."""
-    ruta = await pacientes_service.ruta_imagen_paciente(db, paciente_id)
-    if not ruta:
+    """Redirige a la URL firmada de Cloud Storage."""
+    gs_url = await pacientes_service.ruta_imagen_paciente(db, paciente_id)
+    if not gs_url:
         raise HTTPException(
             status_code=404,
             detail={"detail": "Imagen no encontrada para este paciente", "error_code": "NOT_FOUND"},
         )
 
-    ruta_path = Path(ruta)
-    if not ruta_path.exists():
-        raise HTTPException(
-            status_code=404,
-            detail={"detail": "El archivo de imagen no existe en el servidor", "error_code": "FILE_NOT_FOUND"},
-        )
+    from app.services.extraccion_service import _generar_url_firmada
+    signed_url = _generar_url_firmada(gs_url)
+    if signed_url:
+        return RedirectResponse(url=signed_url)
 
-    return FileResponse(
-        path=ruta_path,
-        media_type="image/jpeg",
-        filename=ruta_path.name,
+    raise HTTPException(
+        status_code=404,
+        detail={"detail": "No se pudo generar URL de acceso a la imagen", "error_code": "FILE_NOT_FOUND"},
     )
 
 
@@ -77,16 +84,14 @@ async def obtener_imagen_paciente(
     responses={404: {"model": ErrorResponse}},
 )
 async def obtener_extracciones(
-    paciente_id: uuid.UUID,
-    db: AsyncSession = Depends(get_db),
+    paciente_id: str,
+    db: AsyncFirestoreClient = Depends(get_db),
 ):
-    """Obtiene el historial de extracciones VLM de un paciente."""
     paciente = await pacientes_service.obtener_paciente(db, paciente_id)
     if not paciente:
         raise HTTPException(
             status_code=404,
             detail={"detail": "Paciente no encontrado", "error_code": "NOT_FOUND"},
         )
-
     extracciones = await pacientes_service.obtener_extracciones(db, paciente_id)
-    return {"paciente_id": str(paciente_id), "extracciones": extracciones}
+    return {"paciente_id": paciente_id, "extracciones": extracciones}

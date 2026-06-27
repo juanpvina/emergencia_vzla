@@ -1,0 +1,15 @@
+# Ignore files not needed in Cloud Build
+.git
+.gitignore
+.env
+.env.example
+__pycache__/
+*.pyc
+*.pyo
+uploads/
+*.jpeg
+*.jpg
+*.png
+*.webp
+Dockerfile
+.gcloudignore

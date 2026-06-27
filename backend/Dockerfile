@@ -2,21 +2,18 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Instalar dependencias del sistema necesarias para asyncpg y Pillow
+# No system dependencies needed (no PostgreSQL, no gcc, no libpq-dev)
+# Pillow needs minimal deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    libpq-dev \
+    libjpeg62-turbo \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar e instalar dependencias Python
+# Copy and install Python dependencies
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar el código de la aplicación
+# Copy application code
 COPY app/ /app/app/
 
-# Puerto de la aplicación
-EXPOSE 8000
-
-# Comando de inicio con Uvicorn
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Cloud Run injects the PORT env variable
+CMD exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}

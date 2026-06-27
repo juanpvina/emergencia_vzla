@@ -1,173 +1,104 @@
 import logging
 import uuid
+from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
-from sqlalchemy.ext.asyncio import AsyncSession
+from google.cloud.firestore_v1.async_client import AsyncClient as AsyncFirestoreClient
+from google.cloud.firestore_v1.base_query import FieldFilter
 
-from app.models.paciente import Paciente
-from app.models.verificacion import Verificacion
 from app.schemas.verificacion import VerificacionCreate, VerificacionRead, VerificacionStats
 
 logger = logging.getLogger(__name__)
 
-# Umbrales para cambio de estado
 CONFIRMACIONES_PARA_PARCIAL = 1
 CONFIRMACIONES_PARA_VERIFICADO = 3
 
 
 async def registrar_voto(
-    db: AsyncSession, paciente_id: uuid.UUID, voto: VerificacionCreate
+    db: AsyncFirestoreClient, paciente_id: str, voto: VerificacionCreate
 ) -> VerificacionStats:
-    """
-    Registra el voto de un verificador sobre un paciente.
+    paciente_ref = db.collection("pacientes").document(paciente_id)
+    paciente_doc = await paciente_ref.get()
 
-    Reglas:
-    - Un verificador solo puede votar una vez por paciente.
-    - Si el voto es 'confirmar' y acumula 3+, el paciente pasa a 'verificado'.
-    - Si el voto es 'reportar_error', el paciente pasa a 'error'.
-    - Si hay 1 confirmación, el paciente pasa a 'parcial'.
-
-    Args:
-        db: Sesión de base de datos.
-        paciente_id: UUID del paciente.
-        voto: Datos del voto (tipo, verificador_id, comentario).
-
-    Returns:
-        VerificacionStats con estado actualizado.
-
-    Raises:
-        ValueError: Si el paciente no existe.
-        ValueError: Si el verificador ya votó.
-    """
-    # Verificar que el paciente existe
-    result = await db.execute(select(Paciente).where(Paciente.id == paciente_id))
-    paciente = result.scalar_one_or_none()
-    if not paciente:
+    if not paciente_doc.exists:
         raise ValueError("Paciente no encontrado")
 
-    # Verificar que el verificador no haya votado ya
-    result = await db.execute(
-        select(Verificacion).where(
-            Verificacion.paciente_id == paciente_id,
-            Verificacion.verificador_id == voto.verificador_id,
-        )
-    )
-    if result.scalar_one_or_none():
+    verificacion_ref = paciente_ref.collection("verificaciones").document(voto.verificador_id)
+    verificacion_doc = await verificacion_ref.get()
+    if verificacion_doc.exists:
         raise ValueError("Ya has votado sobre este paciente")
 
-    # Registrar voto
-    nuevo_voto = Verificacion(
-        paciente_id=paciente_id,
-        verificador_id=voto.verificador_id,
-        tipo=voto.tipo,
-        comentario=voto.comentario,
-    )
-    db.add(nuevo_voto)
-    await db.flush()
+    now = datetime.now(timezone.utc)
 
-    # Actualizar estado del paciente
-    await _actualizar_estado_paciente(db, paciente_id)
+    await verificacion_ref.set({
+        "verificador_id": voto.verificador_id,
+        "tipo": voto.tipo,
+        "comentario": voto.comentario,
+        "created_at": now,
+    })
 
-    # Devolver stats actualizados
-    return await obtener_stats(db, paciente_id)
+    paciente_data = paciente_doc.to_dict()
+    if voto.tipo == "confirmar":
+        new_confirmaciones = paciente_data.get("total_confirmaciones", 0) + 1
+        new_reportes = paciente_data.get("total_reportes", 0)
+    else:
+        new_confirmaciones = paciente_data.get("total_confirmaciones", 0)
+        new_reportes = paciente_data.get("total_reportes", 0) + 1
 
-
-async def _actualizar_estado_paciente(db: AsyncSession, paciente_id: uuid.UUID) -> None:
-    """
-    Actualiza el status_verificacion del paciente según las reglas:
-    - 0 confirmaciones → no_verificado
-    - 1+ confirmaciones → parcial
-    - 3+ confirmaciones → verificado
-    - Cualquier reporte de error → error
-    """
-    # Contar confirmaciones
-    result = await db.execute(
-        select(func.count(Verificacion.id)).where(
-            Verificacion.paciente_id == paciente_id,
-            Verificacion.tipo == "confirmar",
-        )
-    )
-    total_confirmaciones = result.scalar() or 0
-
-    # Contar reportes de error
-    result = await db.execute(
-        select(func.count(Verificacion.id)).where(
-            Verificacion.paciente_id == paciente_id,
-            Verificacion.tipo == "reportar_error",
-        )
-    )
-    total_reportes = result.scalar() or 0
-
-    # Determinar nuevo estado
-    if total_reportes > 0:
+    if new_reportes > 0:
         nuevo_estado = "error"
-    elif total_confirmaciones >= CONFIRMACIONES_PARA_VERIFICADO:
+    elif new_confirmaciones >= CONFIRMACIONES_PARA_VERIFICADO:
         nuevo_estado = "verificado"
-    elif total_confirmaciones >= CONFIRMACIONES_PARA_PARCIAL:
+    elif new_confirmaciones >= CONFIRMACIONES_PARA_PARCIAL:
         nuevo_estado = "parcial"
     else:
         nuevo_estado = "no_verificado"
 
-    # Actualizar paciente
-    result = await db.execute(select(Paciente).where(Paciente.id == paciente_id))
-    paciente = result.scalar_one_or_none()
-    if paciente:
-        paciente.status_verificacion = nuevo_estado
-        await db.flush()
-        logger.info(
-            "Paciente %s actualizado a estado: %s (confirmaciones: %d, reportes: %d)",
-            paciente_id, nuevo_estado, total_confirmaciones, total_reportes,
-        )
-
-
-async def obtener_votos(
-    db: AsyncSession, paciente_id: uuid.UUID
-) -> list[VerificacionRead]:
-    """
-    Obtiene todos los votos de un paciente.
-    """
-    result = await db.execute(
-        select(Verificacion)
-        .where(Verificacion.paciente_id == paciente_id)
-        .order_by(Verificacion.created_at.desc())
-    )
-    votos = result.scalars().all()
-    return [VerificacionRead.model_validate(v) for v in votos]
-
-
-async def obtener_stats(
-    db: AsyncSession, paciente_id: uuid.UUID
-) -> VerificacionStats:
-    """
-    Obtiene estadísticas de verificación de un paciente.
-    """
-    # Obtener paciente (para status)
-    result = await db.execute(select(Paciente).where(Paciente.id == paciente_id))
-    paciente = result.scalar_one_or_none()
-    if not paciente:
-        raise ValueError("Paciente no encontrado")
-
-    # Contar confirmaciones
-    result = await db.execute(
-        select(func.count(Verificacion.id)).where(
-            Verificacion.paciente_id == paciente_id,
-            Verificacion.tipo == "confirmar",
-        )
-    )
-    total_confirmaciones = result.scalar() or 0
-
-    # Contar reportes
-    result = await db.execute(
-        select(func.count(Verificacion.id)).where(
-            Verificacion.paciente_id == paciente_id,
-            Verificacion.tipo == "reportar_error",
-        )
-    )
-    total_reportes = result.scalar() or 0
+    await paciente_ref.update({
+        "total_confirmaciones": new_confirmaciones,
+        "total_reportes": new_reportes,
+        "status_verificacion": nuevo_estado,
+        "updated_at": now,
+    })
 
     return VerificacionStats(
         paciente_id=paciente_id,
-        status_verificacion=paciente.status_verificacion,
-        total_confirmaciones=total_confirmaciones,
-        total_reportes=total_reportes,
+        status_verificacion=nuevo_estado,
+        total_confirmaciones=new_confirmaciones,
+        total_reportes=new_reportes,
+    )
+
+
+async def obtener_votos(
+    db: AsyncFirestoreClient, paciente_id: str
+) -> list[VerificacionRead]:
+    verificaciones_ref = db.collection("pacientes").document(paciente_id).collection("verificaciones")
+    docs = verificaciones_ref.order_by("created_at", direction="DESCENDING")
+
+    votos = []
+    async for doc in docs.stream():
+        data = doc.to_dict()
+        votos.append(VerificacionRead(
+            id=data.get("verificador_id", doc.id),
+            paciente_id=paciente_id,
+            verificador_id=data.get("verificador_id", ""),
+            tipo=data.get("tipo", ""),
+            comentario=data.get("comentario"),
+            created_at=data.get("created_at"),
+        ))
+    return votos
+
+
+async def obtener_stats(
+    db: AsyncFirestoreClient, paciente_id: str
+) -> VerificacionStats:
+    paciente_doc = await db.collection("pacientes").document(paciente_id).get()
+    if not paciente_doc.exists:
+        raise ValueError("Paciente no encontrado")
+
+    data = paciente_doc.to_dict()
+    return VerificacionStats(
+        paciente_id=paciente_id,
+        status_verificacion=data.get("status_verificacion", "no_verificado"),
+        total_confirmaciones=data.get("total_confirmaciones", 0),
+        total_reportes=data.get("total_reportes", 0),
     )

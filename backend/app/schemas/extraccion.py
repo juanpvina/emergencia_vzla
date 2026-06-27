@@ -32,8 +32,8 @@ class GeminiResponse(BaseModel):
 
 
 class ExtraccionRead(BaseModel):
-    id: uuid.UUID
-    paciente_id: uuid.UUID
+    id: str
+    paciente_id: str
     imagen_original: str
     modelo_vlm: str
     raw_output: dict
@@ -47,7 +47,7 @@ class ExtraccionRead(BaseModel):
 
 class ExtraccionResult(BaseModel):
     """Respuesta tras procesar una imagen."""
-    pacientes_creados: list[uuid.UUID] = []
+    pacientes_creados: list[str] = []
     total_pacientes: int = 0
     advertencias: list[str] = []
     raw_respuesta: GeminiResponse | None = None

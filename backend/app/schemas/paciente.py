@@ -17,7 +17,7 @@ class PacienteCreate(BaseModel):
 
 
 class PacienteRead(BaseModel):
-    id: uuid.UUID
+    id: str
     nombre: str
     cedula: str | None
     hospital: str | None
@@ -29,9 +29,9 @@ class PacienteRead(BaseModel):
     foto_url: str | None
     status_verificacion: str
     confianza_global: float | None
-    ultima_extraccion_id: uuid.UUID | None
-    created_at: datetime
-    updated_at: datetime
+    ultima_extraccion_id: str | None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 

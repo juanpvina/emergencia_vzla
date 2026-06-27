@@ -1,0 +1,20 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "pacientes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "cedula", "order": "ASCENDING"},
+        {"fieldPath": "nombre_lower", "order": "ASCENDING"}
+      ]
+    },
+    {
+      "collectionGroup": "pacientes",
+      "queryScope": "COLLECTION",
+      "fields": [
+        {"fieldPath": "nombre_tokens", "arrayConfig": "CONTAINS"},
+        {"fieldPath": "created_at", "order": "DESCENDING"}
+      ]
+    }
+  ]
+}

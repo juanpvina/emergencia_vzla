@@ -1,143 +1,120 @@
 import logging
 import uuid
-from pathlib import Path
-
-from sqlalchemy import func, or_, select, text
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
-
-from app.models.paciente import Paciente
-from app.models.verificacion import Verificacion
-from app.schemas.paciente import PacienteDetail, PacienteList, PacienteRead
+from datetime import datetime, timezone
+from google.cloud.firestore_v1.async_client import AsyncClient as AsyncFirestoreClient
+from google.cloud.firestore_v1.base_query import FieldFilter
+from app.schemas.paciente import PacienteDetail, PacienteList, PacienteRead, PacienteCreate
 
 logger = logging.getLogger(__name__)
 
 
+def _normalizar_cedula(cedula: str) -> str:
+    return "".join(c for c in cedula if c.isdigit())
+
+
+def _doc_to_paciente_read(doc) -> PacienteRead:
+    data = doc.to_dict() if hasattr(doc, "to_dict") else doc
+    return PacienteRead(
+        id=data.get("id", doc.id if hasattr(doc, "id") else ""),
+        nombre=data.get("nombre", ""),
+        cedula=data.get("cedula"),
+        hospital=data.get("hospital"),
+        piso=data.get("piso"),
+        habitacion=data.get("habitacion"),
+        edad=data.get("edad"),
+        estado_salud=data.get("estado_salud"),
+        contacto=data.get("contacto"),
+        foto_url=data.get("foto_url"),
+        status_verificacion=data.get("status_verificacion", "no_verificado"),
+        confianza_global=data.get("confianza_global"),
+        ultima_extraccion_id=data.get("ultima_extraccion_id"),
+        created_at=data.get("created_at"),
+        updated_at=data.get("updated_at"),
+    )
+
+
 async def listar_pacientes(
-    db: AsyncSession, limit: int = 20, offset: int = 0
+    db: AsyncFirestoreClient, limit: int = 20, offset: int = 0
 ) -> PacienteList:
-    """
-    Lista pacientes con paginación.
+    pacientes_ref = db.collection("pacientes")
+    count_docs = [d async for d in pacientes_ref.select(["id"]).stream()]
+    total = len(count_docs)
+    query = pacientes_ref.order_by("created_at", direction="DESCENDING").limit(limit)
+    docs = [d async for d in query.stream()]
+    docs = docs[offset:offset + limit] if offset else docs[:limit]
 
-    Args:
-        db: Sesión de base de datos.
-        limit: Máximo de resultados (default 20, max 100).
-        offset: Desplazamiento para paginación.
-
-    Returns:
-        PacienteList con items, total, limit y offset.
-    """
-    # Total de registros
-    total_result = await db.execute(select(func.count(Paciente.id)))
-    total = total_result.scalar() or 0
-
-    # Consulta paginada
-    result = await db.execute(
-        select(Paciente)
-        .order_by(Paciente.created_at.desc())
-        .limit(limit)
-        .offset(offset)
-    )
-    pacientes = result.scalars().all()
-
-    return PacienteList(
-        items=[PacienteRead.model_validate(p) for p in pacientes],
-        total=total,
-        limit=limit,
-        offset=offset,
-    )
+    items = [_doc_to_paciente_read(d) for d in docs]
+    return PacienteList(items=items, total=total, limit=limit, offset=offset)
 
 
 async def obtener_paciente(
-    db: AsyncSession, paciente_id: uuid.UUID
+    db: AsyncFirestoreClient, paciente_id: str
 ) -> PacienteDetail | None:
-    """
-    Obtiene un paciente por su ID, incluyendo conteo de verificaciones.
-
-    Args:
-        db: Sesión de base de datos.
-        paciente_id: UUID del paciente.
-
-    Returns:
-        PacienteDetail o None si no existe.
-    """
-    result = await db.execute(
-        select(Paciente).where(Paciente.id == paciente_id)
-    )
-    paciente = result.scalar_one_or_none()
-
-    if not paciente:
+    doc = await db.collection("pacientes").document(paciente_id).get()
+    if not doc.exists:
         return None
-
-    # Contar verificaciones
-    confirmaciones = await db.execute(
-        select(func.count(Verificacion.id)).where(
-            Verificacion.paciente_id == paciente_id,
-            Verificacion.tipo == "confirmar",
-        )
+    data = doc.to_dict()
+    detail = PacienteDetail(
+        id=data.get("id", doc.id),
+        nombre=data.get("nombre", ""),
+        cedula=data.get("cedula"),
+        hospital=data.get("hospital"),
+        piso=data.get("piso"),
+        habitacion=data.get("habitacion"),
+        edad=data.get("edad"),
+        estado_salud=data.get("estado_salud"),
+        contacto=data.get("contacto"),
+        foto_url=data.get("foto_url"),
+        status_verificacion=data.get("status_verificacion", "no_verificado"),
+        confianza_global=data.get("confianza_global"),
+        ultima_extraccion_id=data.get("ultima_extraccion_id"),
+        created_at=data.get("created_at"),
+        updated_at=data.get("updated_at"),
+        total_confirmaciones=data.get("total_confirmaciones", 0),
+        total_reportes=data.get("total_reportes", 0),
     )
-    reportes = await db.execute(
-        select(func.count(Verificacion.id)).where(
-            Verificacion.paciente_id == paciente_id,
-            Verificacion.tipo == "reportar_error",
-        )
-    )
-
-    detail = PacienteDetail.model_validate(paciente)
-    detail.total_confirmaciones = confirmaciones.scalar() or 0
-    detail.total_reportes = reportes.scalar() or 0
     return detail
 
 
 async def obtener_paciente_por_cedula(
-    db: AsyncSession, cedula: str
+    db: AsyncFirestoreClient, cedula: str
 ) -> PacienteRead | None:
-    """
-    Busca paciente por cédula exacta.
-
-    La cédula se normaliza eliminando cualquier caracter no dígito.
-    """
     cedula_limpia = _normalizar_cedula(cedula)
     if not cedula_limpia:
         return None
-
-    result = await db.execute(
-        select(Paciente).where(Paciente.cedula == cedula_limpia)
-    )
-    paciente = result.scalar_one_or_none()
-    return PacienteRead.model_validate(paciente) if paciente else None
+    docs = db.collection("pacientes").where(filter=FieldFilter("cedula", "==", cedula_limpia)).limit(1)
+    results = [d async for d in docs.stream()]
+    if results:
+        return _doc_to_paciente_read(results[0])
+    return None
 
 
 async def buscar_por_nombre(
-    db: AsyncSession, nombre: str, limit: int = 20, offset: int = 0
+    db: AsyncFirestoreClient, nombre: str, limit: int = 20, offset: int = 0
 ) -> PacienteList:
-    """
-    Busca pacientes por nombre (ILIKE, case-insensitive, con normalización unicode).
-    """
-    # Usar ILIKE para búsqueda case-insensitive
-    # Normalizar unicode: descomponer caracteres con acentos
-    patron = f"%{nombre}%"
+    nombre_lower = nombre.lower().strip()
+    tokens = [t for t in nombre_lower.split() if t]
 
-    # Total de resultados
-    total_result = await db.execute(
-        select(func.count(Paciente.id)).where(
-            Paciente.nombre.ilike(patron)
+    pacientes_ref = db.collection("pacientes")
+    all_docs = {}
+    for token in tokens:
+        query = pacientes_ref.where(
+            filter=FieldFilter("nombre_tokens", "array_contains", token)
         )
-    )
-    total = total_result.scalar() or 0
+        async for doc in query.stream():
+            all_docs[doc.id] = doc
 
-    # Resultados paginados
-    result = await db.execute(
-        select(Paciente)
-        .where(Paciente.nombre.ilike(patron))
-        .order_by(Paciente.created_at.desc())
-        .limit(limit)
-        .offset(offset)
+    sorted_docs = sorted(
+        all_docs.values(),
+        key=lambda d: d.to_dict().get("created_at", datetime.min.replace(tzinfo=timezone.utc)),
+        reverse=True,
     )
-    pacientes = result.scalars().all()
+
+    total = len(sorted_docs)
+    paginated = sorted_docs[offset:offset + limit]
 
     return PacienteList(
-        items=[PacienteRead.model_validate(p) for p in pacientes],
+        items=[_doc_to_paciente_read(d) for d in paginated],
         total=total,
         limit=limit,
         offset=offset,
@@ -145,88 +122,104 @@ async def buscar_por_nombre(
 
 
 async def busqueda_global(
-    db: AsyncSession, q: str, limit: int = 20, offset: int = 0
+    db: AsyncFirestoreClient, q: str, limit: int = 20, offset: int = 0
 ) -> PacienteList:
-    """
-    Búsqueda global que busca en cédula y nombre simultáneamente.
-    """
     cedula_normalizada = _normalizar_cedula(q)
-    patron = f"%{q}%"
+    resultados = {}
 
-    conditions = [Paciente.nombre.ilike(patron)]
     if cedula_normalizada:
-        conditions.append(Paciente.cedula == cedula_normalizada)
+        docs = db.collection("pacientes").where(
+            filter=FieldFilter("cedula", "==", cedula_normalizada)
+        ).limit(limit)
+        async for doc in docs.stream():
+            resultados[doc.id] = doc
 
-    # Total
-    total_result = await db.execute(
-        select(func.count(Paciente.id)).where(or_(*conditions))
-    )
-    total = total_result.scalar() or 0
+    nombre_lower = q.lower().strip()
+    tokens = [t for t in nombre_lower.split() if t]
+    for token in tokens:
+        query = db.collection("pacientes").where(
+            filter=FieldFilter("nombre_tokens", "array_contains", token)
+        )
+        async for doc in query.stream():
+            resultados[doc.id] = doc
 
-    # Resultados paginados
-    result = await db.execute(
-        select(Paciente)
-        .where(or_(*conditions))
-        .order_by(Paciente.created_at.desc())
-        .limit(limit)
-        .offset(offset)
+    sorted_docs = sorted(
+        resultados.values(),
+        key=lambda d: d.to_dict().get("created_at", datetime.min.replace(tzinfo=timezone.utc)),
+        reverse=True,
     )
-    pacientes = result.scalars().all()
+
+    total = len(sorted_docs)
+    paginated = sorted_docs[offset:offset + limit]
 
     return PacienteList(
-        items=[PacienteRead.model_validate(p) for p in pacientes],
+        items=[_doc_to_paciente_read(d) for d in paginated],
         total=total,
         limit=limit,
         offset=offset,
     )
 
 
-async def obtener_extracciones(
-    db: AsyncSession, paciente_id: uuid.UUID
-) -> list:
-    """
-    Obtiene todas las extracciones de un paciente, con datos de la imagen.
-    """
-    from app.models.extraccion import Extraccion
+async def crear_paciente_manual(
+    db: AsyncFirestoreClient, data: PacienteCreate
+) -> PacienteRead:
+    paciente_id = uuid.uuid4().hex
+    now = datetime.now(timezone.utc)
 
-    result = await db.execute(
-        select(Extraccion)
-        .where(Extraccion.paciente_id == paciente_id)
-        .order_by(Extraccion.created_at.desc())
-    )
-    extracciones = result.scalars().all()
-    return [
-        {
-            "id": str(e.id),
-            "imagen_original": e.imagen_original,
-            "modelo_vlm": e.modelo_vlm,
-            "conf_global": e.conf_global,
-            "es_completo": e.es_completo,
-            "created_at": e.created_at.isoformat(),
-        }
-        for e in extracciones
-    ]
+    nombre_lower = data.nombre.lower().strip()
+    nombre_tokens = [t for t in nombre_lower.split() if t]
+
+    doc_data = {
+        "id": paciente_id,
+        "nombre": data.nombre,
+        "cedula": _normalizar_cedula(data.cedula) if data.cedula else None,
+        "nombre_lower": nombre_lower,
+        "nombre_tokens": nombre_tokens,
+        "hospital": data.hospital,
+        "piso": data.piso,
+        "habitacion": data.habitacion,
+        "estado_salud": data.estado_salud,
+        "edad": data.edad,
+        "contacto": data.contacto,
+        "foto_url": None,
+        "status_verificacion": "no_verificado",
+        "confianza_global": 1.0,
+        "ultima_extraccion_id": None,
+        "total_confirmaciones": 0,
+        "total_reportes": 0,
+        "created_at": now,
+        "updated_at": now,
+        "origen": "manual",
+    }
+
+    await db.collection("pacientes").document(paciente_id).set(doc_data)
+    return _doc_to_paciente_read(doc_data)
+
+
+async def obtener_extracciones(
+    db: AsyncFirestoreClient, paciente_id: str
+) -> list:
+    extracciones_ref = db.collection("pacientes").document(paciente_id).collection("extracciones")
+    docs = extracciones_ref.order_by("created_at", direction="DESCENDING")
+    resultados = []
+    async for doc in docs.stream():
+        data = doc.to_dict()
+        resultados.append({
+            "id": data.get("id", doc.id),
+            "imagen_original": data.get("imagen_gs_url", ""),
+            "modelo_vlm": data.get("modelo_vlm", ""),
+            "conf_global": data.get("conf_global"),
+            "es_completo": data.get("es_completo", True),
+            "created_at": data.get("created_at"),
+        })
+    return resultados
 
 
 async def ruta_imagen_paciente(
-    db: AsyncSession, paciente_id: uuid.UUID
+    db: AsyncFirestoreClient, paciente_id: str
 ) -> str | None:
-    """
-    Obtiene la ruta de la imagen original asociada a la última extracción
-    de un paciente.
-    """
-    from app.models.extraccion import Extraccion
-
-    result = await db.execute(
-        select(Extraccion.imagen_original)
-        .where(Extraccion.paciente_id == paciente_id)
-        .order_by(Extraccion.created_at.desc())
-        .limit(1)
-    )
-    row = result.one_or_none()
-    return row[0] if row else None
-
-
-def _normalizar_cedula(cedula: str) -> str:
-    """Elimina cualquier caracter que no sea dígito."""
-    return "".join(c for c in cedula if c.isdigit())
+    extracciones_ref = db.collection("pacientes").document(paciente_id).collection("extracciones")
+    docs = extracciones_ref.order_by("created_at", direction="DESCENDING").limit(1)
+    async for doc in docs.stream():
+        return doc.to_dict().get("imagen_gs_url")
+    return None

@@ -1,0 +1,14 @@
+{
+  "name": "emergencia-vzla",
+  "private": true,
+  "version": "0.2.0",
+  "scripts": {
+    "predev": "cd frontend && npm install && cd ..",
+    "dev": "concurrently -n api,web -c blue,green \"cd backend && .venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --port 8000\" \"cd frontend && npm run dev\"",
+    "setup": "cd backend && python -m venv .venv && .venv\\Scripts\\pip install -r requirements.txt -q && cd .. && cd frontend && npm install",
+    "build": "cd frontend && npm run build"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.0"
+  }
+}

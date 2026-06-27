@@ -2,12 +2,24 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    # Base de datos
-    database_url: str = "postgresql+asyncpg://app:app_secret_123@localhost:5432/pacientes"
+    # Google Cloud
+    gcp_project: str = ""
+    firestore_database: str = "(default)"
+    storage_bucket: str = ""
 
-    # Google Gemini
+    # Motor de extracción para imágenes
+    # Opciones:
+    #   "gemini"         - Gemini Vision (requiere GEMINI_API_KEY)
+    #   "vision"         - Cloud Vision OCR + parser rule-based (gratis 1000/mes)
+    #   "vision+gemini"  - Cloud Vision OCR + Gemini estructura texto
+    extraction_engine: str = "gemini"
+
+    # Admin panel
+    admin_password: str = "admin"
+
+    # Google Gemini (solo necesario si extraction_engine incluye "gemini")
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.1-flash-lite"
+    gemini_model: str = "gemini-2.5-flash-lite"
     gemini_temperature: float = 0.1
     gemini_max_tokens: int = 4096
 
