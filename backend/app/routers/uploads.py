@@ -1,7 +1,7 @@
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from google.cloud.firestore_v1.async_client import AsyncClient as AsyncFirestoreClient
 
 from app.firestore import get_db

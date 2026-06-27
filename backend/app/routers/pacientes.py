@@ -65,7 +65,7 @@ async def obtener_imagen_paciente(
     paciente_id: str,
     db: AsyncFirestoreClient = Depends(get_db),
 ):
-    """Redirige a la URL firmada de Cloud Storage."""
+    """Sirve la imagen original del upload desde Cloud Storage."""
     gs_url = await pacientes_service.ruta_imagen_paciente(db, paciente_id)
     if not gs_url:
         raise HTTPException(
@@ -73,14 +73,21 @@ async def obtener_imagen_paciente(
             detail={"detail": "Imagen no encontrada para este paciente", "error_code": "NOT_FOUND"},
         )
 
-    signed_url = _generar_url_firmada(gs_url)
-    if signed_url:
-        return RedirectResponse(url=signed_url)
-
-    raise HTTPException(
-        status_code=404,
-        detail={"detail": "No se pudo generar URL de acceso a la imagen", "error_code": "FILE_NOT_FOUND"},
-    )
+    try:
+        from google.cloud import storage as gcs
+        parts = gs_url.replace("gs://", "").split("/", 1)
+        if len(parts) != 2:
+            raise ValueError(f"URL inválida: {gs_url}")
+        bucket = gcs.Client(project=settings.gcp_project).bucket(parts[0])
+        blob = bucket.blob(parts[1])
+        img_bytes = blob.download_as_bytes()
+        return Response(content=img_bytes, media_type="image/jpeg")
+    except Exception as exc:
+        logger.warning("No se pudo leer imagen de Cloud Storage: %s", exc)
+        raise HTTPException(
+            status_code=404,
+            detail={"detail": "No se pudo acceder a la imagen", "error_code": "FILE_NOT_FOUND"},
+        )
 
 
 @router.get(

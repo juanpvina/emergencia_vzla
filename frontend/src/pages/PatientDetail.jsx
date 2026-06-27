@@ -133,10 +133,10 @@ function PatientDetail() {
     <div className="max-w-3xl mx-auto">
       <Link to="/" className="text-blue-600 hover:underline text-sm mb-4 inline-block">← Volver</Link>
 
-      <div className="bg-white border rounded-xl p-6">
+      <div className="glass-panel p-6 animate-slide-up">
         <div className="grid md:grid-cols-3 gap-6">
           <div className="md:col-span-1 space-y-4">
-            <div className="bg-gray-100 rounded-lg overflow-hidden min-h-[200px] flex items-center justify-center cursor-pointer" onClick={() => setShowImageModal(true)}>
+            <div className="bg-white/50 backdrop-blur-sm border border-gray-200/50 rounded-xl overflow-hidden min-h-[200px] flex items-center justify-center cursor-pointer hover-scale" onClick={() => setShowImageModal(true)}>
               {imageLoading && (
                 <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full" />
               )}
@@ -151,7 +151,7 @@ function PatientDetail() {
             </div>
             <p className="text-xs text-gray-400 text-center">Subir foto del paciente (opcional)</p>
 
-            <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-4 text-center">
+            <div className="bg-white/40 border border-dashed border-gray-300 rounded-xl p-4 text-center hover:bg-white/60 transition-colors duration-300">
               <p className="text-xs text-gray-500 mb-2">Foto del paciente (opcional, baja calidad)</p>
               {patient.foto_paciente_url && (
                 <img src={getPatientPhotoUrl(id)} alt="Foto del paciente" className="max-h-32 mx-auto mb-2 rounded" />
@@ -177,7 +177,7 @@ function PatientDetail() {
           <div className="md:col-span-2">
             <div className="flex items-start justify-between gap-2">
               <h2 className="text-2xl font-bold text-gray-900 mb-2">{patient.nombre}</h2>
-              <button onClick={handleShare} className="flex-shrink-0 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-600 transition">
+              <button onClick={handleShare} className="flex-shrink-0 px-3 py-1.5 bg-white/70 hover:bg-white/90 border border-gray-200 rounded-lg text-sm text-gray-600 hover-scale shadow-sm">
                 {copied ? '✅ Copiado' : '🔗 Compartir'}
               </button>
             </div>

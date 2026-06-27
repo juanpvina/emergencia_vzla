@@ -14,6 +14,8 @@ const fingerprint = generateFingerprint()
 function Archivos() {
   const [uploads, setUploads] = useState([])
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [hasMore, setHasMore] = useState(true)
   const [selected, setSelected] = useState(null)
   const [editPaciente, setEditPaciente] = useState(null)
   const [editForm, setEditForm] = useState({})
@@ -29,12 +31,28 @@ function Archivos() {
   })
   const imgRef = useRef(null)
 
+  const verifiedCount = (pcs) => pcs?.filter(p => p.status_verificacion === 'verificado').length || 0
+
   useEffect(() => {
-    listUploads(50, 0)
-      .then(r => setUploads(r.data.items || []))
+    listUploads(20, 0)
+      .then(r => {
+        setUploads(r.data.items || [])
+        setHasMore((r.data.items || []).length >= 20)
+      })
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  const handleLoadMore = async () => {
+    setLoadingMore(true)
+    try {
+      const r = await listUploads(20, uploads.length)
+      const newItems = r.data.items || []
+      setUploads(prev => [...prev, ...newItems])
+      setHasMore(newItems.length >= 20)
+    } catch {}
+    setLoadingMore(false)
+  }
 
   const handleSelect = async (id) => {
     if (selecting) return
@@ -203,6 +221,11 @@ function Archivos() {
                 </button>
               )})}
             </div>
+          )}
+          {hasMore && !loading && (
+            <button onClick={handleLoadMore} disabled={loadingMore} className="w-full mt-3 py-2 border-2 border-dashed border-gray-300 text-gray-500 rounded-lg text-sm font-medium hover:border-gray-400 hover:text-gray-700 disabled:opacity-40 transition">
+              {loadingMore ? 'Cargando...' : 'Cargar más'}
+            </button>
           )}
         </div>
 

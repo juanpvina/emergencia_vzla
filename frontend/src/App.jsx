@@ -9,7 +9,7 @@ import Admin from './pages/Admin'
 function App() {
   return (
     <div className="min-h-screen flex flex-col">
-      <header className="bg-blue-700 text-white shadow-md">
+      <header className="glass-header text-white sticky top-0 z-50">
         <div className="max-w-6xl mx-auto px-4 py-3 flex items-center justify-between">
           <Link to="/" className="text-xl font-bold flex items-center gap-2">
             <span>🏥</span> Emergencia Venezuela
@@ -23,7 +23,7 @@ function App() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-6">
+      <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-6 animate-fade-in">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/subir" element={<Upload />} />
