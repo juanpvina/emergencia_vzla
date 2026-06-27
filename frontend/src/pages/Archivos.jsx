@@ -79,7 +79,7 @@ function Archivos() {
       hospital: p.hospital || '',
       piso: p.piso || '',
       habitacion: p.habitacion || '',
-      edad: p.edad || '',
+      edad: p.edad != null ? String(p.edad) : '',
       estado_salud: p.estado_salud || '',
       contacto: p.contacto || '',
     })
@@ -87,15 +87,33 @@ function Archivos() {
 
   const handleSave = async () => {
     try {
-      const payload = { ...editForm }
-      if (payload.edad) payload.edad = parseInt(payload.edad)
-      else payload.edad = null
+      const payload = {
+        nombre: editForm.nombre || null,
+        cedula: editForm.cedula?.match(/^\d+$/) ? editForm.cedula : null,
+        hospital: editForm.hospital || null,
+        piso: editForm.piso || null,
+        habitacion: editForm.habitacion || null,
+        edad: editForm.edad ? parseInt(editForm.edad) : null,
+        estado_salud: editForm.estado_salud || null,
+        contacto: editForm.contacto || null,
+      }
+      const updated = {
+        ...selected.pacientes.find(p => p.id === editPaciente),
+        ...payload,
+        edad: payload.edad,
+      }
+      setSelected({
+        ...selected,
+        pacientes: selected.pacientes.map(p => p.id === editPaciente ? updated : p),
+      })
       await updatePatient(editPaciente, payload)
       setMsg({ type: 'success', text: 'Paciente actualizado' })
+      setTimeout(() => setMsg(null), 2000)
       setEditPaciente(null)
-      if (selected) handleSelect(selected.id)
     } catch (err) {
-      setMsg({ type: 'error', text: err.response?.data?.detail || 'Error al actualizar' })
+      const detail = err.response?.data?.detail
+      const msg = Array.isArray(detail) ? detail.map(d => d.msg).join('; ') : typeof detail === 'string' ? detail : 'Error al actualizar'
+      setMsg({ type: 'error', text: msg })
     }
   }
 
@@ -119,11 +137,28 @@ function Archivos() {
       if (payload.edad) payload.edad = parseInt(payload.edad)
       else payload.edad = null
       if (!payload.cedula) payload.cedula = null
-      await createPatient(payload)
+      const res = await createPatient(payload)
+      const nuevoPaciente = {
+        id: res.data.data.id,
+        nombre: res.data.data.nombre,
+        cedula: payload.cedula,
+        hospital: payload.hospital,
+        piso: payload.piso,
+        habitacion: payload.habitacion,
+        edad: payload.edad,
+        estado_salud: payload.estado_salud,
+        contacto: payload.contacto,
+        status_verificacion: 'no_verificado',
+        confianza_global: 0.95,
+        total_confirmaciones: 0,
+        total_reportes: 0,
+      }
       setMsg({ type: 'success', text: 'Paciente añadido' })
       setShowAddForm(false)
       setAddForm({ nombre: '', cedula: '', hospital: '', piso: '', habitacion: '', edad: '', estado_salud: '', contacto: '' })
-      if (selected) handleSelect(selected.id)
+      if (selected) {
+        setSelected({ ...selected, pacientes: [...selected.pacientes, nuevoPaciente] })
+      }
     } catch (err) {
       setMsg({ type: 'error', text: err.response?.data?.detail || 'Error al añadir' })
     }
@@ -140,6 +175,8 @@ function Archivos() {
         )
         setSelected({ ...selected, pacientes: updatePacientes })
       }
+      setMsg({ type: 'success', text: '✅ Votado' })
+      setTimeout(() => setMsg(null), 2000)
     } catch (err) {
       if (err.response?.status === 409) {
         setMsg({ type: 'error', text: 'Ya votaste este paciente' })

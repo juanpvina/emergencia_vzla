@@ -231,9 +231,6 @@ function Upload() {
               <button type="submit" disabled={saving} className="px-6 py-2.5 bg-blue-700 text-white rounded-lg font-medium hover:bg-blue-800 disabled:opacity-50 transition">
                 {saving ? 'Guardando...' : 'Registrar paciente'}
               </button>
-              <button type="button" onClick={reset} className="px-4 py-2.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition">
-                Limpiar
-              </button>
             </div>
           </form>
         </div>
