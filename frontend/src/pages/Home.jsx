@@ -107,6 +107,23 @@ function Home() {
         </Link>
       </div>
 
+      {/* Revisar archivos subidos */}
+      <div className="w-full max-w-2xl mb-8 p-5 bg-amber-50 border border-amber-200 rounded-xl">
+        <div className="flex items-start gap-4">
+          <div className="text-3xl">🔍</div>
+          <div className="flex-1">
+            <h3 className="font-semibold text-amber-900 text-lg mb-1">Ayudanos a verificar los datos</h3>
+            <p className="text-amber-700 text-sm mb-3">
+              Los pacientes se extraen automáticamente de fotos de listados. A veces la IA puede equivocarse.
+              Revisá los archivos subidos, corregí errores y ayudá a mantener los datos precisos.
+            </p>
+            <Link to="/archivos" className="inline-block px-4 py-2 bg-amber-600 text-white rounded-lg text-sm font-medium hover:bg-amber-700 transition">
+              Revisar archivos subidos
+            </Link>
+          </div>
+        </div>
+      </div>
+
       {/* Últimos pacientes */}
       <div className="w-full max-w-2xl">
         <h3 className="text-lg font-semibold text-gray-900 mb-4">Últimos pacientes registrados</h3>

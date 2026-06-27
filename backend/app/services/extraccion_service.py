@@ -15,10 +15,15 @@ from app.schemas.extraccion import (
     PacienteExtraido,
 )
 from app.services.gemini_service import extraer_datos_desde_imagen
-from app.services.vision_ocr_service import extraer_texto_vision, parsear_texto_a_pacientes, estructurar_texto_con_gemini
+from app.services.vision_ocr_service import extraer_texto_vision, parsear_texto_a_pacientes, estructurar_texto_con_gemini, estructurar_con_gemini_con_imagen
 from app.utils.imagen import mejorar_contraste, validar_imagen
 
 logger = logging.getLogger(__name__)
+
+
+def _v(campo):
+    """Retorna .valor de un CampoExtraido o None si el campo es None."""
+    return campo.valor if campo else None
 
 
 def _get_storage_client():
@@ -67,6 +72,7 @@ async def procesar_imagen(
     Si motor es None, lee la configuración desde Firestore.
     """
     motor = motor or await _get_engine_from_firestore(db)
+    contexto = await _get_contexto_from_firestore(db)
 
     validar_imagen(nombre_archivo, contenido)
 
@@ -84,17 +90,20 @@ async def procesar_imagen(
 
     try:
         if motor == "gemini":
-            respuesta_gemini: GeminiResponse = await _procesar_con_gemini(temp_path)
+            respuesta_gemini: GeminiResponse = await _procesar_con_gemini(temp_path, contexto)
             modelo_vlm = settings.gemini_model
         elif motor == "vision":
             respuesta_gemini = _procesar_con_vision(contenido)
             modelo_vlm = "cloud-vision+parser"
         elif motor == "vision+gemini":
-            respuesta_gemini = await _procesar_con_vision_y_gemini(contenido)
+            respuesta_gemini = await _procesar_con_vision_y_gemini(contenido, contexto)
             modelo_vlm = "cloud-vision+gemini"
+        elif motor == "vision+gemini+image":
+            respuesta_gemini = await _procesar_con_vision_gemini_imagen(temp_path, contenido, contexto)
+            modelo_vlm = "cloud-vision+gemini+image"
         else:
             raise ValueError(
-                f"Motor '{motor}' no válido. Use: gemini, vision, vision+gemini"
+                f"Motor '{motor}' no válido. Use: gemini, vision, vision+gemini, vision+gemini+image"
             )
     finally:
         for p in [temp_path, Path(str(temp_path).replace(".jpeg", "_mejorada.jpeg"))]:
@@ -112,8 +121,8 @@ async def procesar_imagen(
             origen=f"imagen_{motor}",
         )
         pacientes_ids.append(paciente_id)
-        if paciente_data.hospital.valor:
-            hospitales.add(paciente_data.hospital.valor)
+        if _v(paciente_data.hospital):
+            hospitales.add(_v(paciente_data.hospital))
 
     await _registrar_upload(db, gs_url, pacientes_ids, motor, list(hospitales))
 
@@ -125,10 +134,10 @@ async def procesar_imagen(
     )
 
 
-async def _procesar_con_gemini(temp_path) -> GeminiResponse:
+async def _procesar_con_gemini(temp_path, contexto: str = "") -> GeminiResponse:
     """Motor gemini: Gemini Vision directo sobre la imagen."""
     ruta_mejorada = mejorar_contraste(str(temp_path))
-    return await extraer_datos_desde_imagen(ruta_mejorada)
+    return await extraer_datos_desde_imagen(ruta_mejorada, contexto)
 
 
 def _procesar_con_vision(contenido: bytes) -> GeminiResponse:
@@ -137,12 +146,20 @@ def _procesar_con_vision(contenido: bytes) -> GeminiResponse:
     return parsear_texto_a_pacientes(lineas)
 
 
-async def _procesar_con_vision_y_gemini(contenido: bytes) -> GeminiResponse:
+async def _procesar_con_vision_y_gemini(contenido: bytes, contexto: str = "") -> GeminiResponse:
     """Motor vision+gemini: Cloud Vision OCR + Gemini estructura el texto."""
     lineas = extraer_texto_vision(contenido)
     if not lineas:
         return GeminiResponse(pacientes=[], advertencias=["No se detectó texto en la imagen"])
-    return await estructurar_texto_con_gemini(lineas)
+    return await estructurar_texto_con_gemini(lineas, contexto)
+
+
+async def _procesar_con_vision_gemini_imagen(temp_path: Path, contenido: bytes, contexto: str = "") -> GeminiResponse:
+    """Motor vision+gemini+image: Cloud Vision OCR + Gemini estructura con texto E imagen."""
+    lineas = extraer_texto_vision(contenido)
+    if not lineas:
+        return GeminiResponse(pacientes=[], advertencias=["No se detectó texto en la imagen"])
+    return await estructurar_con_gemini_con_imagen(str(temp_path), lineas, contexto)
 
 
 async def procesar_excel(
@@ -172,8 +189,8 @@ async def _guardar_paciente_y_extraccion_firestore(
     respuesta_gemini,
     origen: str = "imagen",
 ) -> str:
-    cedula = paciente_data.cedula.valor
-    edad = _parsear_edad(paciente_data.edad.valor)
+    cedula = _v(paciente_data.cedula)
+    edad = _parsear_edad(_v(paciente_data.edad))
     now = datetime.now(timezone.utc)
 
     paciente_id = None
@@ -190,7 +207,7 @@ async def _guardar_paciente_y_extraccion_firestore(
 
     if not paciente_id:
         paciente_id = uuid.uuid4().hex
-        nombre = paciente_data.nombre.valor or "S/N"
+        nombre = _v(paciente_data.nombre) or "S/N"
         nombre_lower = nombre.lower().strip()
         nombre_tokens = [t for t in nombre_lower.split() if t]
 
@@ -200,12 +217,12 @@ async def _guardar_paciente_y_extraccion_firestore(
             "cedula": cedula,
             "nombre_lower": nombre_lower,
             "nombre_tokens": nombre_tokens,
-            "hospital": paciente_data.hospital.valor,
-            "piso": paciente_data.piso.valor,
-            "habitacion": paciente_data.habitacion.valor,
+            "hospital": _v(paciente_data.hospital),
+            "piso": _v(paciente_data.piso),
+            "habitacion": _v(paciente_data.habitacion),
             "edad": edad,
-            "estado_salud": paciente_data.estado_salud.valor,
-            "contacto": paciente_data.contacto.valor,
+            "estado_salud": _v(paciente_data.estado_salud),
+            "contacto": _v(paciente_data.contacto),
             "foto_url": gs_url,
             "status_verificacion": "no_verificado",
             "confianza_global": None,
@@ -220,13 +237,13 @@ async def _guardar_paciente_y_extraccion_firestore(
         logger.info("Nuevo paciente creado: %s", nombre)
 
     confs = [
-        paciente_data.nombre.confianza,
-        paciente_data.cedula.confianza,
-        paciente_data.hospital.confianza,
-        paciente_data.piso.confianza,
-        paciente_data.habitacion.confianza,
-        paciente_data.estado_salud.confianza,
-        paciente_data.contacto.confianza,
+        paciente_data.nombre.confianza if paciente_data.nombre else None,
+        paciente_data.cedula.confianza if paciente_data.cedula else None,
+        paciente_data.hospital.confianza if paciente_data.hospital else None,
+        paciente_data.piso.confianza if paciente_data.piso else None,
+        paciente_data.habitacion.confianza if paciente_data.habitacion else None,
+        paciente_data.estado_salud.confianza if paciente_data.estado_salud else None,
+        paciente_data.contacto.confianza if paciente_data.contacto else None,
     ]
     confs_validas = [c for c in confs if c is not None]
     conf_global = sum(confs_validas) / len(confs_validas) if confs_validas else None
@@ -240,13 +257,13 @@ async def _guardar_paciente_y_extraccion_firestore(
         "prompt_usado": None,
         "raw_output": respuesta_gemini.model_dump(mode="json"),
         "metadatos": None,
-        "conf_nombre": paciente_data.nombre.confianza,
-        "conf_cedula": paciente_data.cedula.confianza,
-        "conf_hospital": paciente_data.hospital.confianza,
-        "conf_piso": paciente_data.piso.confianza,
-        "conf_habitacion": paciente_data.habitacion.confianza,
-        "conf_estado": paciente_data.estado_salud.confianza,
-        "conf_contacto": paciente_data.contacto.confianza,
+        "conf_nombre": paciente_data.nombre.confianza if paciente_data.nombre else None,
+        "conf_cedula": paciente_data.cedula.confianza if paciente_data.cedula else None,
+        "conf_hospital": paciente_data.hospital.confianza if paciente_data.hospital else None,
+        "conf_piso": paciente_data.piso.confianza if paciente_data.piso else None,
+        "conf_habitacion": paciente_data.habitacion.confianza if paciente_data.habitacion else None,
+        "conf_estado": paciente_data.estado_salud.confianza if paciente_data.estado_salud else None,
+        "conf_contacto": paciente_data.contacto.confianza if paciente_data.contacto else None,
         "conf_global": conf_global,
         "es_completo": True,
         "razon_parcial": None,
@@ -362,3 +379,14 @@ async def _registrar_upload(
         })
     except Exception as exc:
         logger.warning("No se pudo registrar upload: %s", exc)
+
+
+async def _get_contexto_from_firestore(db) -> str:
+    """Lee el contexto del listado desde Firestore (admin panel)."""
+    try:
+        doc = await db.collection("_config").document("settings").get()
+        if doc.exists:
+            return doc.to_dict().get("contexto", "")
+    except Exception:
+        pass
+    return ""

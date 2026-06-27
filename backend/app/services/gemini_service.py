@@ -204,13 +204,14 @@ def _configurar_gemini() -> None:
     genai.configure(api_key=settings.gemini_api_key)
 
 
-async def extraer_datos_desde_imagen(ruta_imagen: str) -> GeminiResponse:
+async def extraer_datos_desde_imagen(ruta_imagen: str, contexto: str = "") -> GeminiResponse:
     """
     Envía una imagen a Gemini 2.0 Flash y devuelve los datos extraídos
     estructurados según el schema GeminiResponse.
 
     Args:
         ruta_imagen: Ruta absoluta o relativa al archivo de imagen.
+        contexto: Contexto opcional del listado (configurado en admin).
 
     Returns:
         GeminiResponse con pacientes_completos y pacientes_parciales.
@@ -229,6 +230,15 @@ async def extraer_datos_desde_imagen(ruta_imagen: str) -> GeminiResponse:
 
     logger.info("Enviando imagen a Gemini: %s", ruta_imagen)
 
+    prompt = PROMPT_EXTRACCION
+    if contexto:
+        prompt = f"""CONTEXTO DEL LISTADO (proporcionado por el administrador):
+{contexto}
+
+═══════════════════════════════════════════════════════════════
+
+{prompt}"""
+
     model = genai.GenerativeModel(
         model_name=settings.gemini_model,
         generation_config={
@@ -237,35 +247,22 @@ async def extraer_datos_desde_imagen(ruta_imagen: str) -> GeminiResponse:
         },
     )
 
-    # Subir archivo y generar contenido con manejo de errores
-    uploaded = None
     try:
-        uploaded = genai.upload_file(str(imagen))
-        response = model.generate_content([PROMPT_EXTRACCION, uploaded])
+        import base64
+        with open(str(imagen), "rb") as f:
+            image_data = base64.b64encode(f.read()).decode()
+        response = model.generate_content([
+            PROMPT_EXTRACCION,
+            {"inline_data": {"mime_type": "image/jpeg", "data": image_data}},
+        ])
     except google_exceptions.ResourceExhausted as exc:
         retry_seconds = _extraer_retry_delay(str(exc))
         logger.warning("Cuota de Gemini agotada. Reintentar en %s segundos.", retry_seconds)
-        raise GeminiQuotaError(
-            message=str(exc),
-            retry_after_seconds=retry_seconds,
-        ) from exc
+        raise GeminiQuotaError(message=str(exc), retry_after_seconds=retry_seconds) from exc
     except google_exceptions.Unauthenticated as exc:
-        raise GeminiAuthError(
-            "API key de Gemini inválida. Verifica GEMINI_API_KEY en .env"
-        ) from exc
+        raise GeminiAuthError("API key de Gemini inválida. Verifica GEMINI_API_KEY en .env") from exc
     except google_exceptions.PermissionDenied as exc:
-        raise GeminiAuthError(
-            "API key de Gemini sin permisos. Verifica que la API key tenga acceso a Gemini API."
-        ) from exc
-    finally:
-        # Limpiar archivo temporal en Gemini
-        if uploaded:
-            try:
-                genai.delete_file(uploaded.name)
-            except Exception:
-                logger.warning(
-                    "No se pudo eliminar archivo temporal: %s", uploaded.name
-                )
+        raise GeminiAuthError("API key de Gemini sin permisos. Verifica que la API key tenga acceso a Gemini API.") from exc
 
     return _parsear_respuesta(response.text)
 
@@ -289,13 +286,14 @@ def _extraer_retry_delay(mensaje_error: str) -> int | None:
 def _parsear_respuesta(texto: str) -> GeminiResponse:
     """
     Parsea el texto JSON devuelto por Gemini y lo valida contra GeminiResponse.
+    Intenta varias estrategias de extracción si el parseo directo falla.
     """
+    import re as _re
+
     # Limpiar posibles markdown fences ```json ... ```
     texto_limpio = texto.strip()
     if texto_limpio.startswith("```"):
-        # Extraer contenido entre los delimitadores
         lineas = texto_limpio.splitlines()
-        # Encontrar primera y última línea con ```
         inicio = 0
         fin = len(lineas)
         for i, linea in enumerate(lineas):
@@ -305,18 +303,33 @@ def _parsear_respuesta(texto: str) -> GeminiResponse:
                 else:
                     fin = i
                     break
-        texto_limpio = "\n".join(lineas[inicio:fin])
+        texto_limpio = "\n".join(lineas[inicio:fin]).strip()
 
+    # Intentar parseo directo
     try:
         datos = json.loads(texto_limpio)
+        return GeminiResponse(**datos)
+    except json.JSONDecodeError:
+        pass
+
+    # Intentar extraer JSON con regex (busca { ... } o [ ... ])
+    match = _re.search(r"\{[\s\S]*\}", texto_limpio)
+    if match:
+        candidato = match.group(0)
+        try:
+            datos = json.loads(candidato)
+            return GeminiResponse(**datos)
+        except json.JSONDecodeError:
+            pass
+
+    # Último intento: reparar JSON común (quitar trailing commas, comillas simples)
+    candidato = texto_limpio
+    candidato = _re.sub(r",\s*([}\]])", r"\1", candidato)
+    candidato = candidato.replace("'", '"')
+    try:
+        datos = json.loads(candidato)
+        return GeminiResponse(**datos)
     except json.JSONDecodeError as exc:
         logger.error("Respuesta de Gemini no es JSON válido: %s", exc)
         logger.debug("Texto recibido: %s", texto)
         raise ValueError(f"Error al parsear respuesta JSON de Gemini: {exc}") from exc
-
-    try:
-        return GeminiResponse(**datos)
-    except Exception as exc:
-        logger.error("Respuesta de Gemini no cumple el schema esperado: %s", exc)
-        logger.debug("Datos recibidos: %s", datos)
-        raise ValueError(f"Estructura de respuesta inválida: {exc}") from exc

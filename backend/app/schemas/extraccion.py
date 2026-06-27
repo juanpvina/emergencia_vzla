@@ -12,16 +12,15 @@ class CampoExtraido(BaseModel):
 
 
 class PacienteExtraido(BaseModel):
-    """Paciente extraído por Gemini. Todos los campos son opcionales
-    porque Gemini podría no encontrar toda la información en la imagen."""
-    nombre: CampoExtraido = CampoExtraido()
-    cedula: CampoExtraido = CampoExtraido()
-    hospital: CampoExtraido = CampoExtraido()
-    piso: CampoExtraido = CampoExtraido()
-    habitacion: CampoExtraido = CampoExtraido()
-    edad: CampoExtraido = CampoExtraido()
-    estado_salud: CampoExtraido = CampoExtraido()
-    contacto: CampoExtraido = CampoExtraido()
+    """Paciente extraído por Gemini. Todos los campos son opcionales."""
+    nombre: CampoExtraido | None = None
+    cedula: CampoExtraido | None = None
+    hospital: CampoExtraido | None = None
+    piso: CampoExtraido | None = None
+    habitacion: CampoExtraido | None = None
+    edad: CampoExtraido | None = None
+    estado_salud: CampoExtraido | None = None
+    contacto: CampoExtraido | None = None
     notas: str | None = None
 
 

@@ -4,7 +4,6 @@ import Upload from './pages/Upload'
 import SearchResults from './pages/SearchResults'
 import PatientDetail from './pages/PatientDetail'
 import Archivos from './pages/Archivos'
-import Debug from './pages/Debug'
 import Admin from './pages/Admin'
 
 function App() {
@@ -31,7 +30,6 @@ function App() {
           <Route path="/buscar" element={<SearchResults />} />
           <Route path="/paciente/:id" element={<PatientDetail />} />
           <Route path="/archivos" element={<Archivos />} />
-          <Route path="/debug" element={<Debug />} />
           <Route path="/admin" element={<Admin />} />
         </Routes>
       </main>

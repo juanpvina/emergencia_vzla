@@ -299,7 +299,7 @@ def _extraer_contacto(texto: str) -> CampoExtraido:
     return CampoExtraido()
 
 
-async def estructurar_texto_con_gemini(lineas: list[str]) -> GeminiResponse:
+async def estructurar_texto_con_gemini(lineas: list[str], contexto: str = "") -> GeminiResponse:
     """
     Envía el texto extraído por OCR a Gemini para estructuración (solo texto, sin imagen).
     Más barato y rápido que enviar la imagen completa a Gemini Vision.
@@ -313,7 +313,15 @@ async def estructurar_texto_con_gemini(lineas: list[str]) -> GeminiResponse:
     if not texto_ocr.strip():
         return GeminiResponse(pacientes=[], advertencias=["No se detectó texto"])
 
-    prompt = f"""Estructura los siguientes datos de pacientes venezolanos extraídos por OCR de una foto de listado hospitalario.
+    contexto_bloque = ""
+    if contexto:
+        contexto_bloque = f"""CONTEXTO DEL LISTADO (proporcionado por el administrador):
+{contexto}
+
+────────────────────────────────────────────────────────
+
+"""
+    prompt = f"""{contexto_bloque}Estructura los siguientes datos de pacientes venezolanos extraídos por OCR de una foto de listado hospitalario.
 
 TEXTO OCR:
 ```
@@ -324,7 +332,7 @@ INSTRUCCIONES:
 1. Identifica cada paciente
 2. Extrae: nombre, cédula (solo dígitos), hospital, piso, habitación, edad, estado_salud, contacto (+58XXXXXXXXX)
 3. Confianza 0.9 si claro, 0.6 si dudoso, null si no aparece
-4. Devuelve SOLO JSON:
+4. Devuelve SOLO JSON, sin markdown, sin explicación, sin comillas simples:
 
 {{
   "pacientes": [
@@ -344,10 +352,86 @@ INSTRUCCIONES:
 
     model = genai.GenerativeModel(
         model_name=settings.gemini_model,
-        generation_config={"temperature": 0.0, "max_output_tokens": 4096},
+        generation_config={"temperature": 0.0, "max_output_tokens": 8192},
     )
 
     response = model.generate_content(prompt)
+
+    from app.services.gemini_service import _parsear_respuesta
+    return _parsear_respuesta(response.text)
+
+
+async def estructurar_con_gemini_con_imagen(ruta_imagen: str, lineas: list[str], contexto: str = "") -> GeminiResponse:
+    """
+    Envía la imagen ORIGINAL + el texto OCR a Gemini para estructuración.
+    Gemini ve la imagen (para contexto visual) y el texto extraído por OCR
+    (para precisión). Es el motor más preciso pero el más caro.
+    """
+    from app.services.gemini_service import _configurar_gemini
+    import google.generativeai as genai
+    import base64
+
+    _configurar_gemini()
+
+    texto_ocr = "\n".join(lineas)
+    if not texto_ocr.strip():
+        return GeminiResponse(pacientes=[], advertencias=["No se detectó texto"])
+
+    with open(ruta_imagen, "rb") as f:
+        img_b64 = base64.b64encode(f.read()).decode()
+
+    contexto_bloque = ""
+    if contexto:
+        contexto_bloque = f"""CONTEXTO DEL LISTADO (proporcionado por el administrador):
+{contexto}
+
+────────────────────────────────────────────────────────
+
+"""
+    prompt = f"""{contexto_bloque}Eres un extractor de datos de listados hospitalarios venezolanos.
+
+Tienes dos fuentes de información:
+1. La IMAGEN original del listado (adjunta)
+2. El texto extraído por OCR de esa misma imagen (abajo)
+
+Usa AMBAS fuentes para extraer los datos de cada paciente.
+La imagen te da contexto visual. El OCR te da el texto exacto.
+
+TEXTO OCR:
+```
+{texto_ocr}
+```
+
+Devuelve SOLO JSON con esta estructura exacta (sin markdown, sin explicación):
+{{
+  "pacientes": [
+    {{
+      "nombre": {{"valor": "Nombre Apellido", "confianza": 0.95, "raw_text": "texto"}},
+      "cedula": {{"valor": "12345678", "confianza": 0.95, "raw_text": "texto"}},
+      "hospital": {{"valor": "Hospital X", "confianza": 0.95, "raw_text": "texto"}},
+      "piso": {{"valor": "3", "confianza": 0.95, "raw_text": "texto"}},
+      "habitacion": {{"valor": "312", "confianza": 0.95, "raw_text": "texto"}},
+      "edad": {{"valor": "45", "confianza": 0.95, "raw_text": "texto"}},
+      "estado_salud": {{"valor": "Estable", "confianza": 0.95, "raw_text": "texto"}},
+      "contacto": {{"valor": "+584121234567", "confianza": 0.95, "raw_text": "texto"}}
+    }}
+  ],
+  "advertencias": []
+}}
+
+Si un campo no está disponible, pon {{"valor": null, "confianza": null, "raw_text": null}}.
+Extrae TODOS los pacientes visibles.
+"""
+
+    model = genai.GenerativeModel(
+        model_name=settings.gemini_model,
+        generation_config={"temperature": 0.0, "max_output_tokens": 8192},
+    )
+
+    response = model.generate_content([
+        prompt,
+        {"inline_data": {"mime_type": "image/jpeg", "data": img_b64}},
+    ])
 
     from app.services.gemini_service import _parsear_respuesta
     return _parsear_respuesta(response.text)

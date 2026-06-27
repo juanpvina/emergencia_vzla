@@ -137,6 +137,8 @@ async def subir_foto_paciente(
 
     return SuccessResponse(message="Foto subida exitosamente", data={"foto_url": gs_url})
 
+    return SuccessResponse(message="Foto subida exitosamente", data={"foto_url": gs_url})
+
 
 @router.get(
     "/{paciente_id}/foto-paciente",
@@ -146,33 +148,26 @@ async def obtener_foto_paciente(
     paciente_id: str,
     db: AsyncFirestoreClient = Depends(get_db),
 ):
-    """Redirige a la URL firmada de la foto personal del paciente."""
+    """Devuelve la foto del paciente directamente desde Cloud Storage."""
     doc = await db.collection("pacientes").document(paciente_id).get()
     if not doc.exists:
         raise HTTPException(status_code=404, detail={"detail": "Paciente no encontrado", "error_code": "NOT_FOUND"})
-    foto_url = doc.to_dict().get("foto_paciente_url")
-    if not foto_url:
+    gs_url = doc.to_dict().get("foto_paciente_url")
+    if not gs_url:
         raise HTTPException(status_code=404, detail={"detail": "Foto no encontrada", "error_code": "NOT_FOUND"})
-
-    if foto_url.startswith("http"):
-        return RedirectResponse(url=foto_url)
-
-    signed_url = _generar_url_firmada(foto_url)
-    if signed_url:
-        return RedirectResponse(url=signed_url)
 
     try:
         from google.cloud import storage as gcs
-        parts = foto_url.replace("gs://", "").split("/", 1)
-        if len(parts) == 2:
-            bucket = gcs.Client(project=settings.gcp_project).bucket(parts[0])
-            blob = bucket.blob(parts[1])
-            img_bytes = blob.download_as_bytes()
-            return Response(content=img_bytes, media_type="image/jpeg")
+        parts = gs_url.replace("gs://", "").split("/", 1)
+        if len(parts) != 2:
+            raise ValueError(f"URL inválida: {gs_url}")
+        bucket = gcs.Client(project=settings.gcp_project).bucket(parts[0])
+        blob = bucket.blob(parts[1])
+        img_bytes = blob.download_as_bytes()
+        return Response(content=img_bytes, media_type="image/jpeg")
     except Exception as exc:
         logger.warning("No se pudo leer imagen de Cloud Storage: %s", exc)
-
-    raise HTTPException(status_code=404, detail={"detail": "No se pudo acceder a la foto", "error_code": "FILE_NOT_FOUND"})
+        raise HTTPException(status_code=404, detail={"detail": "No se pudo acceder a la foto", "error_code": "FILE_NOT_FOUND"})
 
 
 @router.put(

@@ -1,11 +1,12 @@
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from google.cloud.firestore_v1.async_client import AsyncClient as AsyncFirestoreClient
 
 from app.firestore import get_db
 from app.schemas.respuesta import ErrorResponse
+from app.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +29,7 @@ async def listar_uploads(
         data = doc.to_dict()
         items.append({
             "id": data.get("id", doc.id),
+            "imagen_gs_url": data.get("imagen_gs_url"),
             "total_pacientes": data.get("total_pacientes", 0),
             "motor": data.get("motor"),
             "hospitales": data.get("hospitales", []),
@@ -59,7 +61,15 @@ async def obtener_upload(
                 "nombre": pd.get("nombre"),
                 "cedula": pd.get("cedula"),
                 "hospital": pd.get("hospital"),
+                "piso": pd.get("piso"),
+                "habitacion": pd.get("habitacion"),
+                "edad": pd.get("edad"),
+                "estado_salud": pd.get("estado_salud"),
+                "contacto": pd.get("contacto"),
                 "status_verificacion": pd.get("status_verificacion", "no_verificado"),
+                "confianza_global": pd.get("confianza_global"),
+                "total_confirmaciones": pd.get("total_confirmaciones", 0),
+                "total_reportes": pd.get("total_reportes", 0),
             })
 
     return {
@@ -71,3 +81,62 @@ async def obtener_upload(
         "pacientes": pacientes,
         "created_at": data.get("created_at"),
     }
+
+
+@router.get("/{upload_id}/imagen")
+async def obtener_imagen_upload(
+    upload_id: str,
+    db: AsyncFirestoreClient = Depends(get_db),
+):
+    """Sirve la imagen original del upload directamente desde Cloud Storage."""
+    doc = await db.collection("uploads").document(upload_id).get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail={"detail": "Upload no encontrado", "error_code": "NOT_FOUND"})
+
+    gs_url = doc.to_dict().get("imagen_gs_url")
+    if not gs_url:
+        raise HTTPException(status_code=404, detail={"detail": "Imagen no encontrada", "error_code": "NOT_FOUND"})
+
+    try:
+        from google.cloud import storage as gcs
+        parts = gs_url.replace("gs://", "").split("/", 1)
+        if len(parts) != 2:
+            raise ValueError(f"URL inválida: {gs_url}")
+        bucket = gcs.Client(project=settings.gcp_project).bucket(parts[0])
+        blob = bucket.blob(parts[1])
+        img_bytes = blob.download_as_bytes()
+        return Response(content=img_bytes, media_type="image/jpeg")
+    except Exception as exc:
+        logger.warning("No se pudo leer imagen de Cloud Storage: %s", exc)
+        raise HTTPException(status_code=404, detail={"detail": "No se pudo acceder a la imagen", "error_code": "FILE_NOT_FOUND"})
+
+
+@router.delete("/{upload_id}")
+async def eliminar_upload(
+    upload_id: str,
+    password: str = Header(alias="x-admin-password"),
+    db: AsyncFirestoreClient = Depends(get_db),
+):
+    """Elimina un upload y todos sus pacientes asociados. Requiere contraseña admin."""
+    if password != settings.admin_password:
+        raise HTTPException(status_code=401, detail="Contraseña incorrecta")
+
+    doc = await db.collection("uploads").document(upload_id).get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail={"detail": "Upload no encontrado"})
+
+    data = doc.to_dict()
+    paciente_ids = data.get("paciente_ids", [])
+    deleted_count = 0
+
+    for pid in paciente_ids:
+        sub_docs = db.collection("pacientes").document(pid).collection("extracciones").stream()
+        async for sub in sub_docs:
+            await sub.reference.delete()
+        await db.collection("pacientes").document(pid).delete()
+        deleted_count += 1
+
+    await db.collection("uploads").document(upload_id).delete()
+    logger.info("Upload %s eliminado con %s pacientes", upload_id, deleted_count)
+
+    return {"message": f"Upload y {deleted_count} pacientes eliminados"}

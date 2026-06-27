@@ -30,8 +30,8 @@ async def upload_imagen(
     file: UploadFile,
     motor: str = Query(
         default=None,
-        description="Motor: 'gemini', 'vision', 'vision+gemini'. Default: configuración del panel admin.",
-        pattern=r"^(gemini|vision|vision\+gemini)$",
+        description="Motor: 'gemini', 'vision', 'vision+gemini', 'vision+gemini+image'. Default: configuración del panel admin.",
+        pattern=r"^(gemini|vision|vision\+gemini|vision\+gemini\+image)$",
     ),
     db: AsyncFirestoreClient = Depends(get_db),
 ):

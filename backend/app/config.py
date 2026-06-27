@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-2.5-flash-lite"
     gemini_temperature: float = 0.1
-    gemini_max_tokens: int = 4096
+    gemini_max_tokens: int = 8192
 
     # Archivos
     upload_dir: str = "./uploads"

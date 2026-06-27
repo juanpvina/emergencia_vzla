@@ -4,7 +4,7 @@ const API_BASE = import.meta.env.VITE_API_URL || '';
 
 const api = axios.create({
   baseURL: `${API_BASE}/api/v1`,
-  timeout: 60000,
+  timeout: 120000,
 });
 
 export async function uploadImage(file, motor = 'gemini', onProgress) {
@@ -95,10 +95,18 @@ export async function deletePatient(id) {
   return api.delete(`/pacientes/${id}`);
 }
 
+export async function deleteUpload(id, password) {
+  return api.delete(`/uploads/${id}`, { headers: { 'x-admin-password': password } });
+}
+
 export async function listUploads(limit = 20, offset = 0) {
   return api.get('/uploads', { params: { limit, offset } });
 }
 
 export async function getUploadDetail(id) {
   return api.get(`/uploads/${id}`);
+}
+
+export function getUploadImageUrl(id) {
+  return `${API_BASE}/api/v1/uploads/${id}/imagen`;
 }
