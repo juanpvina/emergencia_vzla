@@ -68,7 +68,7 @@ function SearchResults() {
               >
                 <div className="flex items-start gap-3">
                   {p.foto_paciente_url && (
-                    <img src={getPatientPhotoUrl(p.id)} alt="" className="w-12 h-12 rounded-full object-cover flex-shrink-0 mt-0.5" />
+                    <img src={getPatientPhotoUrl(p.id)} alt="" className="w-12 h-12 rounded-full object-cover flex-shrink-0 mt-0.5" onError={e => e.target.style.display = 'none'} />
                   )}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-start justify-between">

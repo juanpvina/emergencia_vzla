@@ -142,7 +142,7 @@ function Home() {
                   className="flex items-center gap-3 p-3 bg-white border border-gray-200 rounded-lg hover:border-blue-300 transition"
                 >
                   {p.foto_paciente_url && (
-                    <img src={getPatientPhotoUrl(p.id)} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0" />
+                    <img src={getPatientPhotoUrl(p.id)} alt="" className="w-10 h-10 rounded-full object-cover flex-shrink-0" onError={e => e.target.style.display = 'none'} />
                   )}
                   <div className="flex-1 min-w-0">
                     <span className="font-medium text-gray-900">{p.nombre}</span>

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, useNavigate, Link } from 'react-router-dom'
 import { getPatient, getPatientImageUrl, getVerifications, submitVerification, uploadPatientPhoto, getPatientPhotoUrl } from '../services/api'
 import { useDropzone } from 'react-dropzone'
 
@@ -24,6 +24,7 @@ function generateFingerprint() {
 
 function PatientDetail() {
   const { id } = useParams()
+  const navigate = useNavigate()
   const [patient, setPatient] = useState(null)
   const [verifications, setVerifications] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -59,6 +60,7 @@ function PatientDetail() {
     accept: { 'image/*': ['.jpg', '.jpeg', '.png', '.webp'] },
     maxFiles: 1,
     maxSize: 5 * 1024 * 1024,
+    disabled: uploadingFoto,
   })
 
   const fingerprint = generateFingerprint()
@@ -101,7 +103,7 @@ function PatientDetail() {
   const handleShare = async () => {
     const url = window.location.href
     if (navigator.share) {
-      await navigator.share({ title: `Paciente: ${patient.nombre}`, url })
+      try { await navigator.share({ title: `Paciente: ${patient.nombre}`, url }) } catch {}
     } else {
       await navigator.clipboard.writeText(url)
       setCopied(true)
@@ -131,7 +133,7 @@ function PatientDetail() {
 
   return (
     <div className="max-w-3xl mx-auto">
-      <Link to="/" className="text-blue-600 hover:underline text-sm mb-4 inline-block">← Volver</Link>
+      <button onClick={() => navigate(-1)} className="text-blue-600 hover:underline text-sm mb-4 inline-block">← Volver</button>
 
       <div className="glass-panel p-6 animate-slide-up">
         <div className="grid md:grid-cols-3 gap-6">
