@@ -36,6 +36,8 @@ function PatientDetail() {
   const [voteSuccess, setVoteSuccess] = useState(null)
   const [uploadingFoto, setUploadingFoto] = useState(false)
   const [fotoMsg, setFotoMsg] = useState(null)
+  const [showImageModal, setShowImageModal] = useState(false)
+  const [copied, setCopied] = useState(false)
 
   const onFotoDrop = useCallback(async (acceptedFiles) => {
     const f = acceptedFiles[0]
@@ -96,6 +98,17 @@ function PatientDetail() {
     setVoting(false)
   }
 
+  const handleShare = async () => {
+    const url = window.location.href
+    if (navigator.share) {
+      await navigator.share({ title: `Paciente: ${patient.nombre}`, url })
+    } else {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
   if (loading) {
     return (
       <div className="text-center py-12">
@@ -123,7 +136,7 @@ function PatientDetail() {
       <div className="bg-white border rounded-xl p-6">
         <div className="grid md:grid-cols-3 gap-6">
           <div className="md:col-span-1 space-y-4">
-            <div className="bg-gray-100 rounded-lg overflow-hidden min-h-[200px] flex items-center justify-center">
+            <div className="bg-gray-100 rounded-lg overflow-hidden min-h-[200px] flex items-center justify-center cursor-pointer" onClick={() => setShowImageModal(true)}>
               {imageLoading && (
                 <div className="animate-spin w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full" />
               )}
@@ -136,6 +149,7 @@ function PatientDetail() {
                 style={{ display: imageLoading ? 'none' : 'block' }}
               />
             </div>
+            <p className="text-xs text-gray-400 text-center">Subir foto del paciente (opcional)</p>
 
             <div className="bg-gray-50 border border-dashed border-gray-300 rounded-lg p-4 text-center">
               <p className="text-xs text-gray-500 mb-2">Foto del paciente (opcional, baja calidad)</p>
@@ -161,7 +175,12 @@ function PatientDetail() {
           </div>
 
           <div className="md:col-span-2">
-            <h2 className="text-2xl font-bold text-gray-900 mb-2">{patient.nombre}</h2>
+            <div className="flex items-start justify-between gap-2">
+              <h2 className="text-2xl font-bold text-gray-900 mb-2">{patient.nombre}</h2>
+              <button onClick={handleShare} className="flex-shrink-0 px-3 py-1.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm text-gray-600 transition">
+                {copied ? '✅ Copiado' : '🔗 Compartir'}
+              </button>
+            </div>
 
             <div className="flex flex-wrap gap-2 mb-4">
               <StatusBadge status={stats.status_verificacion || patient.status_verificacion} />
@@ -251,17 +270,15 @@ function PatientDetail() {
               <div className="flex gap-2 mb-3">
                 <button
                   onClick={() => setVoteType('confirmar')}
-                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${
-                    voteType === 'confirmar' ? 'bg-green-600 text-white' : 'bg-white border text-gray-700'
-                  }`}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${voteType === 'confirmar' ? 'bg-green-600 text-white' : 'bg-white border text-gray-700'
+                    }`}
                 >
                   ✅ Confirmar
                 </button>
                 <button
                   onClick={() => setVoteType('reportar_error')}
-                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${
-                    voteType === 'reportar_error' ? 'bg-red-600 text-white' : 'bg-white border text-gray-700'
-                  }`}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-medium transition ${voteType === 'reportar_error' ? 'bg-red-600 text-white' : 'bg-white border text-gray-700'
+                    }`}
                 >
                   ❌ Reportar Error
                 </button>
@@ -298,12 +315,22 @@ function PatientDetail() {
               </div>
 
               <p className="text-xs text-gray-400 mt-2">
-                Tu voto es anónimo. ID de dispositivo: {fingerprint.slice(0, 10)}...
+                ID de dispositivo: {fingerprint.slice(0, 10)}...
               </p>
             </div>
           )}
         </div>
       </div>
+
+      {showImageModal && (
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4" onClick={() => setShowImageModal(false)}>
+          <div className="relative max-w-4xl max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <button onClick={() => setShowImageModal(false)} className="absolute -top-3 -right-3 w-8 h-8 bg-white rounded-full flex items-center justify-center text-lg font-bold shadow z-10">✕</button>
+            <img src={getPatientImageUrl(id)} alt="Listado original" className="max-w-full max-h-[90vh] rounded-lg shadow-2xl" />
+            <p className="text-white text-sm text-center mt-2 opacity-70">Listado original del que se extrajeron los datos</p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

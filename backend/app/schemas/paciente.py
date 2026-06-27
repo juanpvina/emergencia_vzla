@@ -47,3 +47,14 @@ class PacienteList(BaseModel):
 class PacienteDetail(PacienteRead):
     total_confirmaciones: int = 0
     total_reportes: int = 0
+
+
+class PacienteUpdate(BaseModel):
+    nombre: str | None = Field(None, max_length=300)
+    cedula: str | None = Field(None, max_length=10, pattern=r"^\d+$")
+    hospital: str | None = Field(None, max_length=300)
+    piso: str | None = Field(None, max_length=20)
+    habitacion: str | None = Field(None, max_length=20)
+    edad: int | None = Field(None, ge=0, le=150)
+    estado_salud: str | None = None
+    contacto: str | None = Field(None, max_length=20)

@@ -2,11 +2,11 @@ import logging
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from google.cloud.firestore_v1.async_client import AsyncClient as AsyncFirestoreClient
 
 from app.firestore import get_db
-from app.schemas.paciente import PacienteCreate, PacienteDetail, PacienteList
+from app.schemas.paciente import PacienteCreate, PacienteDetail, PacienteList, PacienteUpdate
 from app.schemas.respuesta import ErrorResponse, SuccessResponse
 from app.services import pacientes_service
 from app.services.extraccion_service import _subir_a_cloud_storage, _generar_url_firmada
@@ -118,20 +118,25 @@ async def subir_foto_paciente(
     if len(contenido) == 0:
         raise HTTPException(status_code=422, detail={"detail": "Archivo vacío", "error_code": "EMPTY_FILE"})
 
-    from app.utils.imagen import validar_imagen
+    from app.utils.imagen import validar_imagen, comprimir_foto_paciente
     validar_imagen(file.filename or "foto.jpg", contenido)
 
+    contenido_comprimido = comprimir_foto_paciente(contenido)
+
     try:
-        gs_url = _subir_a_cloud_storage(contenido, file.filename or "foto.jpg", content_type=file.content_type or "image/jpeg")
-    except Exception:
-        gs_url = None
+        gs_url = _subir_a_cloud_storage(contenido_comprimido, f"paciente_{paciente_id}.jpg", content_type="image/jpeg", prefix="pacientes")
+        signed_url = _generar_url_firmada(gs_url, expiration_hours=168)
+        foto_url = signed_url or gs_url
+    except Exception as exc:
+        logger.warning("No se pudo subir foto a Cloud Storage: %s", exc)
+        foto_url = None
 
     await db.collection("pacientes").document(paciente_id).update({
-        "foto_paciente_url": gs_url,
+        "foto_paciente_url": foto_url,
         "updated_at": datetime.now(timezone.utc),
     })
 
-    return SuccessResponse(message="Foto subida exitosamente", data={"foto_url": gs_url})
+    return SuccessResponse(message="Foto subida exitosamente", data={"foto_url": foto_url})
 
 
 @router.get(
@@ -146,12 +151,69 @@ async def obtener_foto_paciente(
     doc = await db.collection("pacientes").document(paciente_id).get()
     if not doc.exists:
         raise HTTPException(status_code=404, detail={"detail": "Paciente no encontrado", "error_code": "NOT_FOUND"})
-    gs_url = doc.to_dict().get("foto_paciente_url")
-    if not gs_url:
+    foto_url = doc.to_dict().get("foto_paciente_url")
+    if not foto_url:
         raise HTTPException(status_code=404, detail={"detail": "Foto no encontrada", "error_code": "NOT_FOUND"})
 
-    signed_url = _generar_url_firmada(gs_url)
+    if foto_url.startswith("http"):
+        return RedirectResponse(url=foto_url)
+
+    signed_url = _generar_url_firmada(foto_url)
     if signed_url:
         return RedirectResponse(url=signed_url)
 
     raise HTTPException(status_code=404, detail={"detail": "No se pudo generar URL de acceso", "error_code": "FILE_NOT_FOUND"})
+
+
+@router.put(
+    "/{paciente_id}",
+    responses={404: {"model": ErrorResponse}},
+)
+async def actualizar_paciente(
+    paciente_id: str,
+    data: PacienteUpdate,
+    db: AsyncFirestoreClient = Depends(get_db),
+):
+    """Actualiza los datos de un paciente."""
+    doc = await db.collection("pacientes").document(paciente_id).get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail={"detail": "Paciente no encontrado", "error_code": "NOT_FOUND"})
+
+    update = {k: v for k, v in data.model_dump(exclude_none=True).items()}
+    if not update:
+        raise HTTPException(status_code=422, detail={"detail": "No hay datos para actualizar", "error_code": "NO_DATA"})
+
+    if "cedula" in update and update["cedula"]:
+        update["cedula"] = "".join(c for c in update["cedula"] if c.isdigit())
+    if "nombre" in update:
+        update["nombre_lower"] = update["nombre"].lower().strip()
+        update["nombre_tokens"] = [t for t in update["nombre_lower"].split() if t]
+
+    update["updated_at"] = datetime.now(timezone.utc)
+    await db.collection("pacientes").document(paciente_id).update(update)
+    return SuccessResponse(message="Paciente actualizado", data={"id": paciente_id})
+
+
+@router.delete(
+    "/{paciente_id}",
+    responses={404: {"model": ErrorResponse}},
+)
+async def eliminar_paciente(
+    paciente_id: str,
+    db: AsyncFirestoreClient = Depends(get_db),
+):
+    """Elimina un paciente y sus subcolecciones."""
+    doc = await db.collection("pacientes").document(paciente_id).get()
+    if not doc.exists:
+        raise HTTPException(status_code=404, detail={"detail": "Paciente no encontrado", "error_code": "NOT_FOUND"})
+
+    extracciones = db.collection("pacientes").document(paciente_id).collection("extracciones")
+    async for edoc in extracciones.stream():
+        await edoc.reference.delete()
+
+    verificaciones = db.collection("pacientes").document(paciente_id).collection("verificaciones")
+    async for vdoc in verificaciones.stream():
+        await vdoc.reference.delete()
+
+    await db.collection("pacientes").document(paciente_id).delete()
+    return SuccessResponse(message="Paciente eliminado", data={"id": paciente_id})

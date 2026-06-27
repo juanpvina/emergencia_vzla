@@ -3,6 +3,7 @@ import Home from './pages/Home'
 import Upload from './pages/Upload'
 import SearchResults from './pages/SearchResults'
 import PatientDetail from './pages/PatientDetail'
+import Archivos from './pages/Archivos'
 import Debug from './pages/Debug'
 import Admin from './pages/Admin'
 
@@ -18,7 +19,7 @@ function App() {
             <Link to="/" className="hover:text-blue-200 transition">Inicio</Link>
             <Link to="/subir" className="hover:text-blue-200 transition">Subir</Link>
             <Link to="/admin" className="hover:text-blue-200 transition text-yellow-200">Admin</Link>
-            <Link to="/debug" className="hover:text-blue-200 transition opacity-60">Debug</Link>
+            <Link to="/archivos" className="hover:text-blue-200 transition opacity-70">Archivos</Link>
           </nav>
         </div>
       </header>
@@ -29,13 +30,14 @@ function App() {
           <Route path="/subir" element={<Upload />} />
           <Route path="/buscar" element={<SearchResults />} />
           <Route path="/paciente/:id" element={<PatientDetail />} />
+          <Route path="/archivos" element={<Archivos />} />
           <Route path="/debug" element={<Debug />} />
           <Route path="/admin" element={<Admin />} />
         </Routes>
       </main>
 
       <footer className="bg-gray-100 border-t text-center py-4 text-sm text-gray-500">
-        Emergencia Venezuela · Datos verificados comunitariamente · {new Date().getFullYear()}
+        Emergencia Venezuela · Datos verificados comunitariamente · by Cognitive.latam · {new Date().getFullYear()}
       </footer>
     </div>
   )

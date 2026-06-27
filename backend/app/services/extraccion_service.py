@@ -25,13 +25,13 @@ def _get_storage_client():
     return storage.Client(project=settings.gcp_project)
 
 
-def _subir_a_cloud_storage(contenido: bytes, nombre_archivo: str, content_type: str = "image/jpeg") -> str:
+def _subir_a_cloud_storage(contenido: bytes, nombre_archivo: str, content_type: str = "image/jpeg", prefix: str = "uploads") -> str:
     """Sube contenido a Cloud Storage y devuelve gs:// URL."""
     client = _get_storage_client()
     bucket = client.bucket(settings.storage_bucket)
 
     ext = Path(nombre_archivo).suffix or ".jpeg"
-    blob_name = f"uploads/{uuid.uuid4().hex}{ext}"
+    blob_name = f"{prefix}/{uuid.uuid4().hex}{ext}"
     blob = bucket.blob(blob_name)
     blob.upload_from_string(contenido, content_type=content_type)
 
@@ -102,6 +102,7 @@ async def procesar_imagen(
                 p.unlink()
 
     pacientes_ids = []
+    hospitales = set()
     for paciente_data in respuesta_gemini.pacientes:
         paciente_id = await _guardar_paciente_y_extraccion_firestore(
             db=db,
@@ -111,6 +112,10 @@ async def procesar_imagen(
             origen=f"imagen_{motor}",
         )
         pacientes_ids.append(paciente_id)
+        if paciente_data.hospital.valor:
+            hospitales.add(paciente_data.hospital.valor)
+
+    await _registrar_upload(db, gs_url, pacientes_ids, motor, list(hospitales))
 
     return ExtraccionResult(
         pacientes_creados=pacientes_ids,
@@ -332,3 +337,28 @@ async def _get_engine_from_firestore(db) -> str:
     except Exception:
         pass
     return settings.extraction_engine
+
+
+async def _registrar_upload(
+    db: AsyncFirestoreClient,
+    gs_url: str | None,
+    paciente_ids: list[str],
+    motor: str,
+    hospitales: list[str],
+) -> None:
+    """Registra un upload en la colección uploads para trackeo."""
+    if not gs_url:
+        return
+    try:
+        upload_id = uuid.uuid4().hex
+        await db.collection("uploads").document(upload_id).set({
+            "id": upload_id,
+            "imagen_gs_url": gs_url,
+            "paciente_ids": paciente_ids,
+            "motor": motor,
+            "hospitales": hospitales,
+            "total_pacientes": len(paciente_ids),
+            "created_at": datetime.now(timezone.utc),
+        })
+    except Exception as exc:
+        logger.warning("No se pudo registrar upload: %s", exc)

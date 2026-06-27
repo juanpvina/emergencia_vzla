@@ -86,3 +86,19 @@ export async function uploadPatientPhoto(id, file, onProgress) {
     },
   });
 }
+
+export async function updatePatient(id, data) {
+  return api.put(`/pacientes/${id}`, data);
+}
+
+export async function deletePatient(id) {
+  return api.delete(`/pacientes/${id}`);
+}
+
+export async function listUploads(limit = 20, offset = 0) {
+  return api.get('/uploads', { params: { limit, offset } });
+}
+
+export async function getUploadDetail(id) {
+  return api.get(`/uploads/${id}`);
+}

@@ -71,3 +71,34 @@ def mejorar_contraste(ruta_origen: str, ruta_destino: str | None = None) -> str:
         img_ecualizada.save(destino, quality=95)
     logger.info("Contraste mejorado: %s -> %s", ruta_origen, destino)
     return destino
+
+
+def comprimir_foto_paciente(contenido: bytes, max_size: int = 300, quality: int = 60) -> bytes:
+    """
+    Comprime y redimensiona una foto de paciente para minimizar espacio.
+    Reduce la imagen a max_size px en el lado más largo, la convierte a JPEG
+    y aplica compresión quality.
+
+    Args:
+        contenido: Bytes de la imagen original.
+        max_size: Tamaño máximo en píxeles del lado más largo.
+        quality: Calidad JPEG (1-100).
+
+    Returns:
+        Bytes de la imagen comprimida en formato JPEG.
+    """
+    img = Image.open(__import__("io").BytesIO(contenido))
+    if img.mode == "RGBA":
+        img = img.convert("RGB")
+    elif img.mode != "RGB":
+        img = img.convert("RGB")
+
+    w, h = img.size
+    if w > max_size or h > max_size:
+        ratio = max_size / max(w, h)
+        img = img.resize((int(w * ratio), int(h * ratio)), Image.LANCZOS)
+
+    buf = __import__("io").BytesIO()
+    img.save(buf, format="JPEG", quality=quality, optimize=True)
+    logger.info("Foto comprimida: %dx%d -> %dx%d, %dKB", w, h, img.width, img.height, buf.tell() // 1024)
+    return buf.getvalue()

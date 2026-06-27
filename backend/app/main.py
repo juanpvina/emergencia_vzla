@@ -44,13 +44,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-from app.routers import admin, busqueda, extraccion, pacientes, verificaciones
+from app.routers import admin, busqueda, extraccion, pacientes, uploads, verificaciones
 
 app.include_router(pacientes.router)
 app.include_router(extraccion.router)
 app.include_router(busqueda.router)
 app.include_router(verificaciones.router)
 app.include_router(admin.router)
+app.include_router(uploads.router)
 
 
 @app.get("/health")
