@@ -70,7 +70,11 @@ async def procesar_imagen(
 
     validar_imagen(nombre_archivo, contenido)
 
-    gs_url = _subir_a_cloud_storage(contenido, nombre_archivo)
+    try:
+        gs_url = _subir_a_cloud_storage(contenido, nombre_archivo)
+    except Exception as exc:
+        logger.warning("No se pudo subir a Cloud Storage (modo local sin credenciales?): %s", exc)
+        gs_url = None
 
     upload_dir = Path(settings.upload_dir)
     upload_dir.mkdir(parents=True, exist_ok=True)

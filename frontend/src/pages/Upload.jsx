@@ -16,6 +16,7 @@ function Upload() {
   const [progress, setProgress] = useState(0)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
+  const [showTips, setShowTips] = useState(false)
 
   useEffect(() => {
     axios.get(`${API_BASE}/api/v1/admin/config`)
@@ -94,7 +95,10 @@ function Upload() {
 
   return (
     <div className="max-w-2xl mx-auto">
-      <h2 className="text-2xl font-bold text-gray-900 mb-6">Subir Datos</h2>
+      <h2 className="text-2xl font-bold text-gray-900 mb-2">Subir datos de pacientes</h2>
+      <p className="text-gray-500 mb-6">
+        Sube una lista de pacientes para que otros puedan buscarlos.
+      </p>
 
       <div className="flex gap-2 mb-6">
         <button
@@ -103,7 +107,7 @@ function Upload() {
             tab === 'imagen' ? 'bg-blue-700 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
           }`}
         >
-          📸 Imagen (Foto de lista)
+          Foto de una lista
         </button>
         <button
           onClick={() => { setTab('excel'); setFile(null); setPreview(null); setExcelPreview(null); setResult(null); setError(null) }}
@@ -111,48 +115,50 @@ function Upload() {
             tab === 'excel' ? 'bg-green-600 text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'
           }`}
         >
-          📊 Archivo Excel
+          Archivo Excel
         </button>
       </div>
 
       {tab === 'imagen' && (
-        <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
-          <label className="block text-sm font-medium text-gray-700 mb-2">Motor de extracción:</label>
-          <div className="flex gap-2">
-            {[
-              { value: 'gemini', label: '🧠 Gemini', desc: 'IA (requiere API Key)' },
-              { value: 'vision', label: '👁️ Cloud Vision', desc: 'OCR + parser (gratis)' },
-              { value: 'vision+gemini', label: '👁️+🧠 Vision+Gemini', desc: 'OCR + IA estructura' },
-            ].map((opt) => (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setMotor(opt.value)}
-                className={`flex-1 px-3 py-2 rounded-lg text-xs text-center transition border ${
-                  motor === opt.value
-                    ? 'bg-blue-700 text-white border-blue-700'
-                    : 'bg-white text-gray-700 border-gray-300 hover:border-blue-400'
-                }`}
-              >
-                <div className="font-medium">{opt.label}</div>
-                <div className={motor === opt.value ? 'text-blue-100' : 'text-gray-400'}>{opt.desc}</div>
-              </button>
-            ))}
+        <div className="mb-6 space-y-3">
+          <div className="p-4 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+            <p className="font-medium mb-1">Toma una foto clara de la lista de pacientes</p>
+            <ul className="list-disc list-inside space-y-1">
+              <li>Coloca la hoja sobre una superficie plana y sin sombras</li>
+              <li>Aleja bien la cámara para que quepa toda la lista</li>
+              <li>Procura buena luz y que el texto se vea nítido</li>
+              <li>Evita fotos inclinadas o borrosas</li>
+            </ul>
+          </div>
+
+          <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-800">
+            <p className="font-medium mb-1">¿Qué pasa después?</p>
+            <p>El sistema lee automáticamente los nombres, cédulas y datos de cada persona de la lista y los guarda para que cualquiera pueda buscarlos desde la página principal.</p>
           </div>
         </div>
       )}
 
       {tab === 'excel' && (
-        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg flex items-center justify-between">
-          <span className="text-sm text-blue-800">
-            ¿No tienes el formato? Descarga la plantilla oficial.
-          </span>
-          <button
-            onClick={handleDownloadTemplate}
-            className="px-3 py-1.5 bg-blue-700 text-white text-sm rounded hover:bg-blue-800 transition"
-          >
-            📥 Descargar Plantilla
-          </button>
+        <div className="mb-6 space-y-3">
+          <div className="p-4 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800">
+            <p className="font-medium mb-1">Usa nuestra plantilla para llenar los datos</p>
+            <ul className="list-disc list-inside space-y-1">
+              <li>Descarga la plantilla, completa los datos y súbela de vuelta</li>
+              <li>Cada fila es un paciente distinto</li>
+              <li>Las columnas con <strong>*</strong> son obligatorias</li>
+              <li>Si no tienes el dato de una columna, déjala vacía</li>
+            </ul>
+          </div>
+
+          <div className="flex items-center justify-between p-4 bg-white border border-gray-200 rounded-lg">
+            <span className="text-sm text-gray-700 font-medium">Descargar plantilla Excel</span>
+            <button
+              onClick={handleDownloadTemplate}
+              className="px-4 py-2 bg-green-600 text-white text-sm rounded-lg hover:bg-green-700 transition font-medium"
+            >
+              Descargar
+            </button>
+          </div>
         </div>
       )}
 
@@ -236,7 +242,7 @@ function Upload() {
               onClick={handleUpload}
               className="w-full py-2.5 bg-blue-700 text-white rounded-lg font-semibold hover:bg-blue-800 transition"
             >
-              {tab === 'imagen' ? 'Extraer Datos con IA' : 'Cargar Pacientes'}
+              {tab === 'imagen' ? 'Extraer datos de la foto' : 'Cargar pacientes'}
             </button>
           )}
 
@@ -249,7 +255,7 @@ function Upload() {
                 />
               </div>
               <p className="text-sm text-gray-500 text-center">
-                {tab === 'imagen' ? `Analizando con ${motor === 'gemini' ? 'Gemini AI' : motor === 'vision' ? 'Cloud Vision' : 'Vision + Gemini'}...` : 'Procesando archivo...'} {progress}%
+                Procesando... {progress}%
               </p>
             </div>
           )}
@@ -266,7 +272,10 @@ function Upload() {
         <div className="mt-4 p-4 bg-green-50 border border-green-200 rounded-lg">
           <h3 className="font-semibold text-green-800 mb-2">Procesamiento completado</h3>
           <p className="text-green-700">
-            Pacientes encontrados: <strong>{result.total_pacientes}</strong>
+            Pacientes registrados: <strong>{result.total_pacientes}</strong>
+          </p>
+          <p className="text-sm text-green-600 mt-1">
+            Ya pueden buscar a estas personas desde la página principal.
           </p>
           {result.advertencias?.length > 0 && (
             <div className="mt-2">

@@ -41,10 +41,12 @@ function Debug() {
       }))
     } catch (err) {
       const elapsed = ((Date.now() - start) / 1000).toFixed(1)
+      const detail = err.response?.data?.detail
+      const msg = typeof detail === 'string' ? detail : detail?.detail || err.message
       setResults(prev => ({
         ...prev,
         [motor]: {
-          error: err.response?.data?.detail || err.message,
+          error: msg,
           elapsed,
           ok: false,
         },
@@ -116,9 +118,8 @@ function Debug() {
             </button>
 
             {results[m.id] && (
-              <div className={`mt-3 p-2 rounded text-xs ${
-                results[m.id].ok ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
-              }`}>
+              <div className={`mt-3 p-2 rounded text-xs ${results[m.id].ok ? 'bg-green-50 border border-green-200' : 'bg-red-50 border border-red-200'
+                }`}>
                 <div className="flex justify-between mb-1">
                   <span className="font-medium">{results[m.id].ok ? 'OK' : 'ERROR'}</span>
                   <span className="text-gray-400">{results[m.id].elapsed}s</span>
@@ -175,9 +176,8 @@ function Debug() {
                     <td className="py-2 px-2 text-gray-600">{results[m.id]?.total_pacientes || '-'}</td>
                     <td className="py-2 px-2 text-gray-600">{results[m.id]?.advertencias?.length || '-'}</td>
                     <td className="py-2 px-2">
-                      <span className={`px-2 py-0.5 rounded text-xs ${
-                        results[m.id].ok ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
-                      }`}>
+                      <span className={`px-2 py-0.5 rounded text-xs ${results[m.id].ok ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
+                        }`}>
                         {results[m.id].ok ? 'OK' : 'ERROR'}
                       </span>
                     </td>
@@ -198,8 +198,7 @@ function Debug() {
           <li><strong>Vision+Gemini</strong>: Cloud Vision extrae texto. Gemini solo estructura (más barato que enviar imagen).</li>
         </ul>
         <p className="mt-2 text-blue-600">
-          Primera prueba gratis: Cloud Vision incluye 1000 unidades/mes sin costo.
-          Gemini: cuota gratuita diaria desde aistudio.google.com.
+          Espacio para debug de distintas formas de OCR
         </p>
       </div>
     </div>
