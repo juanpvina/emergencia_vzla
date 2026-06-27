@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -27,13 +28,24 @@ async def listar_uploads(
     items = []
     for doc in docs:
         data = doc.to_dict()
+        paciente_ids = data.get("paciente_ids", [])
+        total_verificados = 0
+        if paciente_ids:
+            patient_docs = await asyncio.gather(
+                *[db.collection("pacientes").document(pid).get() for pid in paciente_ids]
+            )
+            total_verificados = sum(
+                1 for pd in patient_docs
+                if pd.exists and pd.to_dict().get("status_verificacion") == "verificado"
+            )
         items.append({
             "id": data.get("id", doc.id),
             "imagen_gs_url": data.get("imagen_gs_url"),
             "total_pacientes": data.get("total_pacientes", 0),
+            "total_verificados": total_verificados,
             "motor": data.get("motor"),
             "hospitales": data.get("hospitales", []),
-            "paciente_ids": data.get("paciente_ids", []),
+            "paciente_ids": paciente_ids,
             "created_at": data.get("created_at"),
         })
 

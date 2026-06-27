@@ -11,6 +11,16 @@ function generateFingerprint() {
 
 const fingerprint = generateFingerprint()
 
+function readVotosCache() {
+  try { return JSON.parse(localStorage.getItem('votos_cache') || '{}') } catch { return {} }
+}
+function writeVotosCache(votos) {
+  localStorage.setItem('votos_cache', JSON.stringify(votos))
+}
+function getVotosLocal() {
+  return readVotosCache()[fingerprint] || {}
+}
+
 function Archivos() {
   const [uploads, setUploads] = useState([])
   const [loading, setLoading] = useState(true)
@@ -34,24 +44,25 @@ function Archivos() {
   const [imageLoading, setImageLoading] = useState(true)
   const imgRef = useRef(null)
 
-  const verifiedCount = (pcs) => pcs?.filter(p => p.status_verificacion === 'verificado').length || 0
-
   useEffect(() => {
     listUploads(20, 0)
-      .then(r => {
-        setUploads(r.data.items || [])
-        setHasMore((r.data.items || []).length >= 20)
-      })
+      .then(r => setUploads(sortByRatio(r.data.items || [])))
       .catch(() => {})
       .finally(() => setLoading(false))
   }, [])
+
+  const sortByRatio = (list) => [...list].sort((a, b) => {
+    const aRatio = a.total_pacientes > 0 ? (a.total_verificados || 0) / a.total_pacientes : 0
+    const bRatio = b.total_pacientes > 0 ? (b.total_verificados || 0) / b.total_pacientes : 0
+    return aRatio - bRatio
+  })
 
   const handleLoadMore = async () => {
     setLoadingMore(true)
     try {
       const r = await listUploads(20, uploads.length)
       const newItems = r.data.items || []
-      setUploads(prev => [...prev, ...newItems])
+      setUploads(prev => sortByRatio([...prev, ...newItems]))
       setHasMore(newItems.length >= 20)
     } catch {}
     setLoadingMore(false)
@@ -183,6 +194,10 @@ function Archivos() {
       )
       setSelected({ ...selected, pacientes: updatePacientes })
       await submitVerification(pacienteId, { tipo, verificador_id: fingerprint })
+      const votos = readVotosCache()
+      if (!votos[fingerprint]) votos[fingerprint] = {}
+      votos[fingerprint][pacienteId] = tipo
+      writeVotosCache(votos)
       setMsg({ type: 'success', text: '✅ Votado' })
       setTimeout(() => setMsg(null), 2000)
     } catch (err) {
@@ -247,7 +262,7 @@ function Archivos() {
           ) : (
             <div className="space-y-2">
               {uploads.map(u => {
-                const vc = verifiedCount(u.pacientes)
+                const vc = u.total_verificados || 0
                 const pct = u.total_pacientes > 0 ? Math.round(vc / u.total_pacientes * 100) : 0
                 return (
                 <button key={u.id} onClick={() => handleSelect(u.id)} disabled={selecting === u.id} className={`w-full text-left p-3 rounded-lg border transition ${selected?.id === u.id ? 'border-blue-500 bg-blue-50' : 'border-gray-200 bg-white hover:border-gray-300'} ${selecting === u.id ? 'opacity-60 cursor-wait' : ''}`}>
@@ -381,8 +396,16 @@ function Archivos() {
                               </div>
                             </div>
                             <div className="flex items-center gap-1 flex-shrink-0">
-                              <button onClick={() => handleVote(p.id, 'confirmar')} disabled={votingId === p.id} className="px-1.5 py-1 text-xs text-green-600 hover:bg-green-50 rounded disabled:opacity-40" title="Confirmar">✅</button>
-                              <button onClick={() => handleVote(p.id, 'reportar_error')} disabled={votingId === p.id} className="px-1.5 py-1 text-xs text-red-600 hover:bg-red-50 rounded disabled:opacity-40" title="Reportar error">❌</button>
+                              {getVotosLocal()[p.id] === 'confirmar' ? (
+                                <span className="px-1.5 py-1 text-xs text-green-700 bg-green-100 rounded" title="Ya confirmaste">✅</span>
+                              ) : getVotosLocal()[p.id] === 'reportar_error' ? (
+                                <span className="px-1.5 py-1 text-xs text-red-700 bg-red-100 rounded" title="Ya reportaste">❌</span>
+                              ) : (
+                                <>
+                                  <button onClick={() => handleVote(p.id, 'confirmar')} disabled={votingId === p.id} className="px-1.5 py-1 text-xs text-green-600 hover:bg-green-50 rounded disabled:opacity-40" title="Confirmar">✅</button>
+                                  <button onClick={() => handleVote(p.id, 'reportar_error')} disabled={votingId === p.id} className="px-1.5 py-1 text-xs text-red-600 hover:bg-red-50 rounded disabled:opacity-40" title="Reportar error">❌</button>
+                                </>
+                              )}
                               <button onClick={() => handleEdit(p)} className="px-1.5 py-1 text-xs text-blue-600 hover:bg-blue-50 rounded">✏️</button>
                               <button onClick={() => handleDelete(p.id)} className="px-1.5 py-1 text-xs text-red-600 hover:bg-red-50 rounded">🗑️</button>
                             </div>
